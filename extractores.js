@@ -1,27 +1,8 @@
-/* ═══════════════════════════════════════════════════════════════════════
-   SportStream · EXTRACTORES  (se carga desde GitHub Pages, sin recompilar la app)
-   https://etelio79.github.io/extractores/extractores.js
-   - Sube la versión aquí (VERSION) y en version.json cuando cambies algo.
-   - La app lo ejecuta con window.SSExtractors.resolve(link, log, { nativeFetch }).
-   - resolve devuelve: { ok, ms, status, play: { url, kind: 'm3u8'|'mp4', headers } }
-   ═══════════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
   const VERSION = '1.1.0';
-  let nativeFetch = null;   // lo entrega la app en cada llamada
+  let nativeFetch = null;
 
-  /* Extractores propios por host. Ejemplo para añadir uno:
-     CUSTOM.push({
-       name: 'MiHost',
-       match: (u, link) => /mihost\.com$/.test(u.hostname),
-       run: async (link, log, env) => {
-         const r = await env.nativeFetch(link.url, { headers: link.headers || {} });
-         const html = await r.text();
-         const m = html.match(/file:"([^"]+\.m3u8[^"]*)"/);
-         return m ? { url: m[1], kind: 'm3u8', headers: link.headers } : null;
-       }
-     });
-     Si no hay ninguno que coincida, se usa el método general (abajo). */
   const CUSTOM = [];
 
   function _rootRef(u) {
@@ -82,7 +63,7 @@
   async function extractM3u8(embedUrl, log, hdrs) {
     const t0 = Date.now();
     let url = embedUrl, referer = null, html = '', status = 0;
-    /* Muchos "embeds" ya son el master.m3u8 directo: no hace falta pedir nada */
+
     try {
       if (/\.m3u8$/i.test(new URL(url).pathname)) {
         log('El embed ya es un .m3u8: se usa directo');
@@ -112,15 +93,16 @@
     const t0 = Date.now();
     try {
       const h = Object.assign({}, headers);
-      if (range) h['Range'] = 'bytes=0-1023';
+      if (range) h['Range'] = (typeof range === 'string') ? range : 'bytes=0-1023';
       const r = await nativeFetch(url, { headers: h });
       const txt = await r.text();
       const g = k => { try { return r.headers.get(k) || ''; } catch (_) { return ''; } };
       log('  [' + label + '] HTTP ' + r.status + ' · ' + (g('content-type') || 's/tipo') + ' · ' + txt.length + ' car. · ' + (Date.now() - t0) + ' ms');
-      return { status: r.status, text: txt };
+      const cr = g('content-range'), mt = /\/(\d+)\s*$/.exec(cr);
+      return { status: r.status, text: txt, total: mt ? +mt[1] : 0 };
     } catch (e) {
       log('  [' + label + '] ERROR de red: ' + ((e && e.message) || e));
-      return { status: 0, text: '' };
+      return { status: 0, text: '', total: 0 };
     }
   }
 
@@ -158,7 +140,7 @@
     let lh = (link.headers && typeof link.headers === 'object') ? link.headers : null;
 
     let target = url, tKind = kind, handled = false;
-    /* Extractores propios por host (ver CUSTOM arriba): si uno reconoce la URL, resuelve el enlace real */
+
     for (const c of CUSTOM) {
       let hit = false; try { hit = !!c.match(u, link); } catch (_) {}
       if (!hit) continue;
@@ -168,6 +150,16 @@
         if (r && r.url) { target = r.url; tKind = r.kind || 'm3u8'; if (r.headers) lh = r.headers; handled = true; log('→ ' + target.slice(0, 160)); break; }
         log('El extractor propio no devolvió enlace; se sigue con el método general');
       } catch (e) { log('ERROR en extractor propio: ' + ((e && e.message) || e)); }
+    }
+
+    if (!handled && kind === 'otro') {
+      log('\n-- Detectando el tipo por contenido (solo el primer KB) --');
+      const sr = await _probe(url, lh || {}, true, log, lh ? 'headers del enlace' : 'sin cabeceras');
+      if (sr.status >= 200 && sr.status < 300) {
+        if (/^\s*#EXTM3U/.test(sr.text)) { tKind = 'm3u8'; handled = true; log('→ es una lista m3u8'); }
+        else if (sr.text.slice(4, 8) === 'ftyp') { tKind = 'mp4'; handled = true; log('→ es un MP4 directo'); }
+        else log('→ parece una página: se busca el m3u8 dentro');
+      }
     }
     if (!handled && kind === 'otro') {
       log('\n-- Extractor (página) --');
@@ -195,6 +187,18 @@
       if (tKind === 'mp4') {
         if (r.text.slice(4, 8) === 'ftyp') {
           log('Inicio del archivo: ' + _printable(r.text, 40));
+
+          if (r.status === 206 && r.total > 4 * 1024 * 1024) {
+            const mid = Math.floor(r.total / 2);
+            const rs = await _probe(target, v.h, 'bytes=' + mid + '-' + (mid + 1023), log, 'salto a la mitad del archivo');
+            if (rs.status === 206) log('Salto en el archivo: OK');
+            else if (rs.status === 200) log('ADVERTENCIA: el servidor IGNORA el salto (devuelve desde el inicio); al seguir bajando puede repetir desde el principio.');
+            else log('ADVERTENCIA: el salto a mitad del archivo falla (HTTP ' + rs.status + ').');
+          } else if (r.status === 200) {
+            log('ADVERTENCIA: el servidor no acepta Range (respondió 200); puede no dejar avanzar ni seguir bajando.');
+          } else if (!r.total) {
+            log('ADVERTENCIA: el servidor no informa el tamaño total del archivo.');
+          }
           log('\nRESULTADO: MP4 válido con "' + v.n + '" → se puede reproducir.');
           return { ok: true, ms: Date.now() - t0, status: r.status, play: { url: target, kind: 'mp4', headers: v.h, via: v.n } };
         }
@@ -212,7 +216,6 @@
     log('\nRESULTADO: NO reproducible → ' + lastWhy);
     return { ok: false, ms: Date.now() - t0, status: 0 };
   }
-
 
   async function resolve(link, log, env) {
     nativeFetch = env && env.nativeFetch;
