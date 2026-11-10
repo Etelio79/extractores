@@ -1,12 +1,12 @@
 (function () {
   'use strict';
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
   let nativeFetch = null;
 
   const CUSTOM = [];
 
   // =========================================================================
-  // HELPERS COMPARTIDOS Y CORREGIDOS
+  // HELPERS COMPARTIDOS
   // =========================================================================
 
   function _rootRef(u) {
@@ -15,37 +15,17 @@
 
   function _printable(t, n) { return String(t || '').slice(0, n).replace(/[^\x20-\x7E\n]/g, '·'); }
 
-  // FIX: Uso correcto de __native_fetch y fallback a fetch nativo
+  // FIX: Usar nativeFetch del env correctamente (como en v1.1.0)
   async function _req(url, options = {}) {
-    const headers = options.headers || {};
-    const method = String(options.method || 'GET').toUpperCase();
-    const body = options.body || '';
-    const redirect = options.redirect !== 'manual';
-    
-    let r;
-    if (typeof __native_fetch === 'function') {
-      const crudo = await __native_fetch(url, method, JSON.stringify(headers), body ? 'text' : 'none', body, redirect);
-      const d = JSON.parse(crudo);
-      const h = d.headers || {};
-      return {
-        ok: !!d.ok,
-        status: d.status,
-        url: d.url || url,
-        headers: { get: (n) => h[String(n).toLowerCase()] || null },
-        text: async () => d.body || '',
-        json: async () => { try { return d.body ? JSON.parse(d.body) : null; } catch(e) { return null; } }
-      };
-    } else {
-      r = await fetch(url, { method, headers, body, redirect });
-      return {
-        ok: r.ok,
-        status: r.status,
-        url: r.url,
-        headers: r.headers,
-        text: async () => await r.text(),
-        json: async () => await r.json()
-      };
-    }
+    const r = await nativeFetch(url, options);
+    return {
+      ok: r.ok,
+      status: r.status,
+      url: r.url || url,
+      headers: r.headers,
+      text: () => r.text(),
+      json: () => r.json()
+    };
   }
 
   function _unpackAll(html) {
@@ -757,9 +737,7 @@
 
   async function resolve(link, log, env) {
     nativeFetch = env && env.nativeFetch;
-    if (typeof __native_fetch !== 'function' && typeof nativeFetch !== 'function' && typeof fetch !== 'function') {
-        throw new Error('Falta un método de fetch');
-    }
+    if (typeof nativeFetch !== 'function') throw new Error('Falta nativeFetch');
     return diagnoseEmbed(link, log || function () {});
   }
 
