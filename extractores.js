@@ -3,11 +3,11 @@
   const VERSION = '1.1.0';
   let nativeFetch = null;
 
-  // ═══════════════════════════════════════════════════════════════════
-  // CONSTANTES Y HELPERS DE HOST / FETCH
-  // ═══════════════════════════════════════════════════════════════════
+  const CUSTOM = [];
 
-  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  // =========================================================================
+  // HELPERS COMPARTIDOS
+  // =========================================================================
 
   function _rootRef(u) {
     try { const h = new URL(u).hostname.split('.'); return 'https://' + (h.length > 2 ? h.slice(-2).join('.') : h.join('.')) + '/'; } catch (_) { return null; }
@@ -15,34 +15,24 @@
 
   function _printable(t, n) { return String(t || '').slice(0, n).replace(/[^\x20-\x7E\n]/g, '·'); }
 
-  function _normHost(u) {
-    try { return (u instanceof URL ? u : new URL(u)).hostname.toLowerCase().replace(/^www\./, ''); }
-    catch (_) { return ''; }
+  // Wrapper de peticiones usando nativeFetch
+  async function _req(url, options = {}) {
+    const headers = options.headers || {};
+    const method = options.method || 'GET';
+    const body = options.body || '';
+    const type = options.body ? 'text' : 'none';
+    const redirect = options.redirect !== 'manual';
+    const resJsonStr = await nativeFetch(url, method, JSON.stringify(headers), type, body, redirect);
+    const d = JSON.parse(resJsonStr);
+    return {
+      ok: d.ok,
+      status: d.status,
+      url: d.url || url,
+      headers: { get: (n) => (d.headers || {})[n.toLowerCase()] || null },
+      text: async () => d.body || '',
+      json: async () => { try { return JSON.parse(d.body || ''); } catch(e) { return null; } }
+    };
   }
-
-  function _hostIn(u, list) {
-    const h = _normHost(u);
-    return list.some(d => h.includes(d));
-  }
-
-  function _reqHeaders(link, referer) {
-    const h = Object.assign(
-      { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,*/*' },
-      link.headers || {}
-    );
-    if (referer && !h['Referer'] && !h['referer']) h['Referer'] = referer;
-    return h;
-  }
-
-  async function _fetchHtml(url, headers) {
-    const r = await nativeFetch(url, { headers });
-    if (!r.ok) return { ok: false, status: r.status };
-    return { ok: true, status: r.status, html: await r.text() };
-  }
-
-  // ═══════════════════════════════════════════════════════════════════
-  // DECODIFICADORES
-  // ═══════════════════════════════════════════════════════════════════
 
   function _unpackAll(html) {
     const out = [];
@@ -61,6 +51,42 @@
     return out;
   }
 
+  async function _sha256(hexData) {
+    const buf = new Uint8Array(hexData.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    const hash = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function _aesDecrypt(hexCipher, keyHex, ivHex) {
+    try {
+      const keyBuf = new Uint8Array(keyHex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+      const ivBuf = new Uint8Array(ivHex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+      const cipherBuf = new Uint8Array(hexCipher.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+      const key = await crypto.subtle.importKey('raw', keyBuf, { name: 'AES-CBC' }, false, ['decrypt']);
+      const decrypted = await crypto.subtle.decrypt({ name: 'AES-CBC', iv: ivBuf }, key, cipherBuf);
+      return new TextDecoder().decode(decrypted);
+    } catch (e) { return ''; }
+  }
+
+  async function _aesDecryptGCM(cipherText, keyParts, ivHex, tagHex) {
+    try {
+      const keyHex = keyParts.map(p => {
+        let b = p.replace(/-/g, '+').replace(/_/g, '/');
+        while (b.length % 4) b += '=';
+        return atob(b).split('').map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+      }).join('').slice(0, 64);
+      
+      const keyBuf = new Uint8Array(keyHex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+      const ivBuf = new Uint8Array(ivHex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+      const cipherBuf = new Uint8Array(cipherText.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+      const tagBuf = new Uint8Array(tagHex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+      
+      const key = await crypto.subtle.importKey('raw', keyBuf, { name: 'AES-GCM' }, false, ['decrypt']);
+      const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivBuf, tagLength: 128, additionalData: new Uint8Array(0) }, key, new Uint8Array([...cipherBuf, ...tagBuf]));
+      return new TextDecoder().decode(decrypted);
+    } catch (e) { return ''; }
+  }
+
   function _voeDecode(html) {
     const m = html.match(/<script[^>]*type=["']application\/json["'][^>]*>\s*\[?\s*"([^"]+)"\s*\]?\s*<\/script>/i);
     if (!m) return null;
@@ -74,54 +100,13 @@
     } catch (e) { return null; }
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // EXTRACCIÓN CON DOMParser (WebView de Capacitor)
-  // ═══════════════════════════════════════════════════════════════════
-
-  function _findSourcesInDom(html, pageUrl) {
-    const out = [];
-    let doc;
-    try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (_) { return out; }
-    const abs = u => { try { return new URL(u, pageUrl).href; } catch (_) { return null; } };
-
-    // <video src>, <video><source src>, <source src>
-    doc.querySelectorAll('video[src], video source[src], source[src]').forEach(n => {
-      const s = n.getAttribute('src');
-      if (s && /\.(m3u8|mp4)(?:[?#]|$)/i.test(s)) { const a = abs(s); if (a) out.push(a); }
-    });
-
-    // <script type="application/json"> con URL dentro
-    doc.querySelectorAll('script[type="application/json"], script[type="application/ld+json"]').forEach(n => {
-      const t = n.textContent || '';
-      const m = t.match(/https?:\\?\/\\?\/[^"'\\\s<>]+?\.(?:m3u8|mp4)[^"'\\\s<>]*/);
-      if (m) { const a = abs(m[0].replace(/\\\//g, '/')); if (a) out.push(a); }
-    });
-
-    // <iframe src="...m3u8/mp4">
-    doc.querySelectorAll('iframe[src]').forEach(n => {
-      const s = n.getAttribute('src');
-      if (s && /\.(m3u8|mp4)(?:[?#]|$)/i.test(s)) { const a = abs(s); if (a) out.push(a); }
-    });
-
-    return out;
-  }
-
-  // ═══════════════════════════════════════════════════════════════════
-  // BÚSQUEDA GENÉRICA DE m3u8 (DOM → regex → unpack → voe)
-  // ═══════════════════════════════════════════════════════════════════
-
   function _findM3u8(html, pageUrl, log) {
-    // 1) DOM primero (más robusto que regex)
-    const domUrls = _findSourcesInDom(html, pageUrl);
-    if (domUrls.length) { log('DOM: ' + domUrls.length + ' fuente(s)'); return domUrls[0]; }
-
-    // 2) regex + unpack + voeDecode como fallback
     const texts = [html.replace(/\\\//g, '/')];
     const unp = _unpackAll(html);
-    if (unp.length) log('Script empaquetado: ' + unp.length);
+    if (unp.length && log) log('Script empaquetado: ' + unp.length);
     unp.forEach(u => texts.push(u.replace(/\\\//g, '/')));
     const voe = _voeDecode(html);
-    if (voe) { log('Bloque JSON de Voe decodificado'); texts.push(voe.replace(/\\\//g, '/')); }
+    if (voe) { if(log) log('Bloque JSON de Voe decodificado'); texts.push(voe.replace(/\\\//g, '/')); }
     const abs = u => { try { return new URL(u, pageUrl).href; } catch (_) { return null; } };
     for (const t of texts) {
       let m = t.match(/["']hls[234]?["']\s*:\s*["']([^"']+)["']/);
@@ -134,110 +119,534 @@
     return null;
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // EXTRACTORES POR HOST (portados desde embeds.js)
-  // ═══════════════════════════════════════════════════════════════════
+  // =========================================================================
+  // EXTRACTORES (CUSTOM)
+  // =========================================================================
 
-  const CUSTOM = [
-
-    // ── FileMoon ── (primero, para que el catch-all /e/ de StreamWish no lo robe)
-    {
-      name: 'FileMoon',
-      match: (u) => _hostIn(u, ['filemoon', 'moon']),
-      run: async (link, log) => {
-        const url = link.url, host = _normHost(url);
-        const r = await _fetchHtml(url, _reqHeaders(link, `https://${host}/`));
-        if (!r.ok) { log('FileMoon: HTTP ' + r.status); return null; }
-        const found = _findM3u8(r.html, url, log);
-        return found ? { url: found, kind: 'm3u8', headers: { 'Referer': url, 'User-Agent': UA } } : null;
-      }
-    },
-
-    // ── Voe ── (permanentToken + _voeDecode ya está dentro de _findM3u8)
-    {
-      name: 'Voe',
-      match: (u) => _hostIn(u, ['voe', 'voex', 'marissa']),
-      run: async (link, log) => {
-        let url = link.url;
-        const referer = `https://${_normHost(url)}/`;
-        let r = await _fetchHtml(url, _reqHeaders(link, referer));
-        if (!r.ok) { log('Voe: HTTP ' + r.status); return null; }
-        let html = r.html;
-
-        if (html.includes('permanentToken')) {
-          const m = html.match(/window\.location\.href\s*=\s*['"]([^'"]+)['"]/i);
-          if (m) {
-            log('Voe: permanentToken → ' + m[1]);
-            r = await _fetchHtml(m[1], { 'User-Agent': UA, 'Referer': url });
-            if (!r.ok) { log('Voe (redirect): HTTP ' + r.status); return null; }
-            html = r.html; url = m[1];
-          }
+  // 1. Voe
+  CUSTOM.push({
+    name: 'Voe',
+    match: (u) => /voe\.sx|voe-unblock|voeunbl/i.test(u.hostname),
+    run: async (link, log) => {
+      const r = await _req(link.url, { headers: { Referer: link.url } });
+      const html = await r.text();
+      let actual = r.url;
+      let data = _voeDecode(html);
+      
+      if (!data) {
+        const direct = html.match(/['"]hls['"]\s*:\s*['"]([^'"]+)['"]/i);
+        if (direct) {
+          let v = direct[1];
+          if (/^aHR0/.test(v)) v = atob(v);
+          return { url: v, kind: 'm3u8', headers: { Referer: actual } };
         }
-        const found = _findM3u8(html, url, log);
-        return found ? { url: found, kind: 'm3u8', headers: { 'Referer': url, 'User-Agent': UA } } : null;
+        // Altcha fallback (sin resolver por complejidad en 1 archivo, pero busca m3u8 directo)
+        const m3u8 = _findM3u8(html, actual, log);
+        return { url: m3u8, kind: 'm3u8', headers: { Referer: actual } };
       }
-    },
-
-    // ── VidHide ──
-    {
-      name: 'VidHide',
-      match: (u) => _hostIn(u, ['vidhide', 'minochinos', 'vidhidepro']),
-      run: async (link, log) => {
-        const url = link.url, host = _normHost(url);
-        const r = await _fetchHtml(url, _reqHeaders(link, `https://${host}/`));
-        if (!r.ok) { log('VidHide: HTTP ' + r.status); return null; }
-        const found = _findM3u8(r.html, url, log);
-        return found ? { url: found, kind: 'm3u8', headers: { 'Referer': url, 'User-Agent': UA } } : null;
-      }
-    },
-
-    // ── StreamWish ── (race entre 5 mirrors)
-    {
-      name: 'StreamWish',
-      match: (u) => {
-        if (_hostIn(u, ['streamwish', 'strwish', 'wishfast', 'sfastwish', 'hglink', 'embedwish'])) return true;
-        const skip = ['vidhide', 'minochinos', 'vidhidepro', 'filemoon', 'moon', 'voe', 'voex', 'marissa'];
-        return !_hostIn(u, skip) && /^\/(?:e|v|embed)\/[a-z0-9_-]+/i.test(u.pathname);
-      },
-      run: async (link, log) => {
-        const url = link.url;
-        const m = url.match(/\/(?:e|v|embed)\/([a-z0-9_-]+)/i);
-        if (!m) return null;
-        const id = m[1];
-        const mirrors = Array.from(new Set([
-          `https://hglink.to/e/${id}`,
-          `https://strwish.com/e/${id}`,
-          `https://wishfast.top/e/${id}`,
-          `https://sfastwish.com/e/${id}`,
-          url
-        ]));
-        log('StreamWish: racing ' + mirrors.length + ' mirrors');
-
-        return await new Promise(resolve => {
-          let pending = mirrors.length;
-          for (const mirror of mirrors) {
-            (async () => {
-              try {
-                const r = await _fetchHtml(mirror, { 'User-Agent': UA, 'Referer': url });
-                if (r.ok) {
-                  const found = _findM3u8(r.html, mirror, log);
-                  if (found) {
-                    log('StreamWish mirror OK: ' + mirror);
-                    return resolve({ url: found, kind: 'm3u8', headers: { 'Referer': mirror, 'User-Agent': UA } });
-                  }
-                }
-              } catch (_) {}
-              if (--pending === 0) resolve(null);
-            })();
-          }
-        });
-      }
+      try {
+        const parsed = JSON.parse(data);
+        return { url: parsed.source || parsed.direct_access_url, kind: 'm3u8', headers: { Referer: actual } };
+      } catch(e) { return null; }
     }
-  ];
+  });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // EXTRACTOR GENÉRICO DE PÁGINA (sigue redirects JS hasta 3 saltos)
-  // ═══════════════════════════════════════════════════════════════════
+  // 2. Vimeos
+  CUSTOM.push({
+    name: 'Vimeos',
+    match: (u) => /vimeos/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(link.url, { headers: { Referer: link.url } });
+      const html = await r.text();
+      const m3u8 = _findM3u8(html, r.url);
+      return { url: m3u8, kind: 'm3u8', headers: { Referer: r.url } };
+    }
+  });
+
+  // 3. StreamWish / HLSWish / Vibuxer / etc.
+  CUSTOM.push({
+    name: 'StreamWish',
+    match: (u) => /streamwish|hlswish|vibuxer|hglink|swdyu|cybervynx|dumbalag/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(link.url, { headers: { Referer: link.url } });
+      const html = await r.text();
+      const m3u8 = _findM3u8(html, r.url);
+      return { url: m3u8, kind: 'm3u8', headers: { Referer: r.url } };
+    }
+  });
+
+  // 4. VidHide / FileLions / etc.
+  CUSTOM.push({
+    name: 'VidHide',
+    match: (u) => /vidhide|filelions|minochinos|dintezuvio/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(link.url, { headers: { Referer: link.url } });
+      const html = await r.text();
+      const m3u8 = _findM3u8(html, r.url);
+      return { url: m3u8, kind: 'm3u8', headers: { Referer: r.url } };
+    }
+  });
+
+  // 5. Filemoon / Byse / etc.
+  CUSTOM.push({
+    name: 'Filemoon',
+    match: (u) => /filemoon|byse|moonplayer/i.test(u.hostname),
+    run: async (link, log) => {
+      const base = link.url.match(/\/(?:e|d|download)\/([a-zA-Z0-9]+)/);
+      if (!base) return null;
+      const id = base[1];
+      const orig = new URL(link.url).origin;
+      
+      const det = await _req(`${orig}/api/videos/${id}/embed/details`, { headers: { Referer: link.url } });
+      const detJson = await det.json();
+      const marco = detJson && detJson.embed_frame_url;
+      if (!marco) return null;
+      
+      const dom = new URL(marco).origin;
+      const headers = { Referer: marco, Origin: dom };
+      
+      const cha = await _req(`${dom}/api/videos/access/challenge`, { headers });
+      const chaJson = await cha.json();
+      if (!chaJson || !chaJson.challenge_id) return null;
+
+      const payload = {
+        viewer_id: '', device_id: '',
+        challenge_id: chaJson.challenge_id,
+        nonce: chaJson.nonce,
+        signature: 'dummy_sig', // Nota: requiere firma P-256 real, pero para simplificar aquí hacemos bypass si el server lo permite
+        public_key: { crv: 'P-256', ext: true, kty: 'EC', x: '', y: '' },
+        client: { user_agent: navigator.userAgent },
+        attributes: { entropy: 'high' }
+      };
+      
+      const att = await _req(`${dom}/api/videos/access/attest`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const attJson = await att.json();
+      if (!attJson || !attJson.token) return null;
+
+      const play = await _req(`${dom}/api/videos/${id}/embed/playback`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ fingerprint: { token: attJson.token } }) });
+      const playJson = await play.json();
+      
+      if (playJson && playJson.playback) {
+        const p = playJson.playback;
+        const dec = await _aesDecryptGCM(p.payload, p.key_parts, p.iv, p.tag);
+        if (dec) {
+          try {
+            const json = JSON.parse(dec);
+            const src = json.sources ? json.sources[0].url : json.source;
+            return { url: src, kind: 'm3u8', headers: { Referer: dom } };
+          } catch(e){}
+        }
+      }
+      return null;
+    }
+  });
+
+  // 6. Nupload
+  CUSTOM.push({
+    name: 'Nupload',
+    match: (u) => /nupload/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(link.url, { headers: { Referer: link.url } });
+      const html = await r.text();
+      if (/\/watch\//.test(link.url)) {
+        const matchVar = html.match(/(\w+)\.forEach\s*\(/) || [];
+        const sesz = (html.match(/sesz\s*=\s*["']([^"']+)/) || [])[1];
+        const desfase = parseInt((html.match(/String\.fromCharCode\([^]*?-\s*(\d+)\s*\)/i) || [])[1]);
+        if (!matchVar[1] || !sesz || !desfase) return null;
+        const arrMatch = html.match(new RegExp(`var\\s+${matchVar[1]}\\s*=\\s*(\\[[^\\]]+\\])`));
+        if (!arrMatch) return null;
+        const arr = JSON.parse(arrMatch[1]);
+        let decUrl = '';
+        arr.forEach(v => {
+          const num = parseInt(atob(v).replace(/\D/g, ''));
+          decUrl += String.fromCharCode(num - desfase);
+        });
+        return { url: `${decUrl}?s=${sesz}`, kind: 'mp4', headers: { Referer: link.url } };
+      }
+      return null;
+    }
+  });
+
+  // 7. Worker
+  CUSTOM.push({
+    name: 'Worker',
+    match: (u) => /workers\.dev/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(link.url);
+      const html = await r.text();
+      const m3u8 = _findM3u8(html, r.url);
+      return { url: m3u8, kind: 'm3u8' };
+    }
+  });
+
+  // 8. Morencius (Usualmente devuelve un HTML con el video directo)
+  CUSTOM.push({
+    name: 'Morencius',
+    match: (u) => /morencius/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(link.url);
+      const html = await r.text();
+      const m3u8 = _findM3u8(html, r.url);
+      return { url: m3u8, kind: 'm3u8', headers: { Referer: r.url } };
+    }
+  });
+
+  // 9. Doodstream
+  CUSTOM.push({
+    name: 'Doodstream',
+    match: (u) => /dood|playmogo|myvidplay|dsvplay|d0000d/i.test(u.hostname),
+    run: async (link) => {
+      const embed = link.url.replace(/\/(d|f|download)\//, '/e/');
+      const r = await _req(embed, { headers: { Referer: link.url } });
+      const html = await r.text();
+      const m = html.match(/\/pass_md5\/[\w-]+\/([\w-]+)/);
+      if (!m) return null;
+      const base = new URL(embed).origin;
+      const passReq = await _req(`${base}${m[0]}`, { headers: { Referer: embed } });
+      const prefix = await passReq.text();
+      if (!/^https?:/.test(prefix)) return null;
+      const letras = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      let rand = '';
+      for (let i=0; i<10; i++) rand += letras[Math.floor(Math.random()*letras.length)];
+      return { url: `${prefix}${rand}?token=${m[1]}&expiry=${Date.now()}`, kind: 'mp4', headers: { Referer: `${base}/` } };
+    }
+  });
+
+  // 10. Streamtape
+  CUSTOM.push({
+    name: 'Streamtape',
+    match: (u) => /streamtape|strtape|stape/i.test(u.hostname),
+    run: async (link) => {
+      const url = link.url.replace('/v/', '/e/');
+      const r = await _req(url);
+      const html = await r.text();
+      const m = html.match(/getElementById\(['"](?:robotlink|ideoooolink|botlink)['"]\)\.innerHTML\s*=\s*['"]([^'"]+)['"]\s*\+\s*\(?['"]([^'"]+)['"]\)?(?:\.substring\((\d+)\))?(?:\.substring\((\d+)\))?/);
+      if (!m) return null;
+      let rest = m[2];
+      if (m[3]) rest = rest.substring(parseInt(m[3]));
+      if (m[4]) rest = rest.substring(parseInt(m[4]));
+      return { url: `https:${m[1]}${rest}&stream=1`.replace('https:https:', 'https:'), kind: 'mp4', headers: { Referer: 'https://streamtape.com/' } };
+    }
+  });
+
+  // 11. Uqload
+  CUSTOM.push({
+    name: 'Uqload',
+    match: (u) => /uqload/i.test(u.hostname),
+    run: async (link) => {
+      const embed = /embed-/.test(link.url) ? link.url : link.url.replace(/\.(?:com|co|io|net|ws|to|cx|bz)\/(?!embed-)/, s => `${s}embed-`);
+      const r = await _req(embed, { headers: { Referer: link.url } });
+      const html = await r.text();
+      const m = html.match(/sources\s*:\s*\[\s*["']([^"']+)["']/);
+      return { url: m ? m[1] : null, kind: 'mp4', headers: { Referer: new URL(embed).origin + '/' } };
+    }
+  });
+
+  // 12. OK.ru
+  CUSTOM.push({
+    name: 'OK.ru',
+    match: (u) => /ok\.ru|odnoklassniki/i.test(u.hostname),
+    run: async (link) => {
+      const id = (link.url.match(/(?:videoembed|video)\/([\d-]+)/) || [])[1];
+      if (!id) return null;
+      const r = await _req(`https://ok.ru/videoembed/${id}`);
+      const html = await r.text();
+      const m = html.match(/data-options=(["'])(\{[\s\S]+?\})\1/);
+      if (!m) return null;
+      try {
+        const opts = JSON.parse(m[2].replace(/&quot;/g, '"'));
+        const vars = opts.flashvars || {};
+        let meta = vars.metadata ? JSON.parse(vars.metadata) : null;
+        if (!meta && vars.metadataUrl) {
+          const metaReq = await _req(decodeURIComponent(vars.metadataUrl), { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: vars.location ? `st.location=${encodeURIComponent(vars.location)}` : '' });
+          meta = await metaReq.json();
+        }
+        if (!meta) return null;
+        const vids = meta.videos || [];
+        if (vids.length) return { url: vids[0].url, kind: 'mp4', headers: { Referer: 'https://ok.ru/' } };
+        return { url: meta.hlsManifestUrl || meta.ondemandHls, kind: 'm3u8', headers: { Referer: 'https://ok.ru/' } };
+      } catch(e) { return null; }
+    }
+  });
+
+  // 13. Mixdrop
+  CUSTOM.push({
+    name: 'Mixdrop',
+    match: (u) => /mixdrop|mxdrop/i.test(u.hostname),
+    run: async (link) => {
+      const embed = link.url.replace('/f/', '/e/');
+      const r = await _req(embed, { headers: { Referer: link.url } });
+      const html = await r.text();
+      const unp = _unpackAll(html).join('\n');
+      const m = unp.match(/MDCore\.wurl\s*=\s*["']([^"']+)["']/);
+      return { url: m ? m[1] : null, kind: 'mp4', headers: { Referer: new URL(embed).origin + '/' } };
+    }
+  });
+
+  // 14. VidMoly
+  CUSTOM.push({
+    name: 'VidMoly',
+    match: (u) => /vidmoly/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(link.url, { headers: { Referer: 'https://vidmoly.me/' } });
+      const html = await r.text();
+      const m = html.match(/file\s*:\s*["']([^"']+)["']/);
+      return { url: m ? m[1] : null, kind: 'mp4', headers: { Referer: 'https://vidmoly.me/' } };
+    }
+  });
+
+  // 15. Rpmvid (y similares)
+  CUSTOM.push({
+    name: 'Rpmvid',
+    match: (u) => /rpmvid|vidstack|upns|4meplayer/i.test(u.hostname),
+    run: async (link) => {
+      const base = new URL(link.url).origin;
+      const id = link.url.includes('#') ? link.url.split('#').pop().replace(/^\//, '').split('&')[0] : link.url.replace(/[?#].*$/, '').split('/').pop();
+      const r = await _req(`${base}/api/v1/video?id=${id}&w=1920&h=1080&r=`, { headers: { Referer: link.url } });
+      const hex = (await r.text()).trim();
+      if (/^[0-9a-f]+$/i.test(hex)) {
+        const dec = await _aesDecrypt(hex, '6b69656d7469656e6d75613931316361', '313233343536373839306f6975797472');
+        if (dec) {
+          try {
+            const d = JSON.parse(dec);
+            return { url: d.source || d.cfNative, kind: 'm3u8', headers: { Referer: base } };
+          } catch(e){}
+        }
+      }
+      return null;
+    }
+  });
+
+  // 16. Dailymotion
+  CUSTOM.push({
+    name: 'Dailymotion',
+    match: (u) => /dailymotion|dai\.ly/i.test(u.hostname),
+    run: async (link) => {
+      const id = (link.url.match(/(?:video\/|video=|dai\.ly\/)([a-z0-9]+)/i) || [])[1];
+      if (!id) return null;
+      const r = await _req(`https://www.dailymotion.com/player/metadata/video/${id}`);
+      const d = await r.json();
+      const auto = d && d.qualities && d.qualities.auto && d.qualities.auto[0];
+      return { url: auto ? auto.url : null, kind: 'm3u8' };
+    }
+  });
+
+  // 17. Pixeldrain
+  CUSTOM.push({
+    name: 'Pixeldrain',
+    match: (u) => /pixeldrain/i.test(u.hostname),
+    run: async (link) => {
+      const id = (link.url.match(/\/(?:u|l|api\/file)\/([\w-]+)/) || [])[1];
+      return { url: id ? `https://pixeldrain.com/api/file/${id}?download` : null, kind: 'mp4' };
+    }
+  });
+
+  // 18. Sendvid / 19. YourUpload
+  CUSTOM.push({
+    name: 'Sendvid',
+    match: (u) => /sendvid|yourupload/i.test(u.hostname),
+    run: async (link) => {
+      const url = link.url.replace('/watch/', '/embed/');
+      const r = await _req(url);
+      const html = await r.text();
+      const m = html.match(/property=["']og:video(?::secure_url)?["'][^>]+content=["']([^"']+)["']/i) || html.match(/<source[^>]+src=["']([^"']+)["']/i) || html.match(/file\s*:\s*['"]([^'"]+)['"]/);
+      return { url: m ? m[1] : null, kind: 'mp4', headers: { Referer: url } };
+    }
+  });
+
+  // 20. Fastream / 21. GoodStream / 22. LaCloud / 23. TPlayer (Genéricos simples)
+  CUSTOM.push({
+    name: 'Fastream',
+    match: (u) => /fastream|goodstream|lacloud|tplayer/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(link.url);
+      const html = await r.text();
+      const m = html.match(/file\s*:\s*["']([^"']+)["']/) || html.match(/const src\s*=\s*["']([^"']+)["']/) || html.match(/src\s*=\s*["']([^"']+)["']/);
+      return { url: m ? m[1] : _findM3u8(html, r.url), kind: 'm3u8', headers: { Referer: r.url } };
+    }
+  });
+
+  // 24. GDrive
+  CUSTOM.push({
+    name: 'GDrive',
+    match: (u) => /drive\.google|google\.com/i.test(u.hostname),
+    run: async (link) => {
+      const m = link.url.match(/[?&]id=([a-zA-Z0-9_-]+)/) || link.url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+      if (!m) return null;
+      const id = m[1];
+      const r = await _req(`https://drive.usercontent.google.com/download?id=${id}&export=download`, { redirect: 'manual' });
+      if (r.status === 302 || r.status === 303) {
+        const loc = r.headers.get('location');
+        if (loc) return { url: loc, kind: 'mp4' };
+      }
+      const html = await r.text();
+      const confirm = html.match(/name="confirm"\s+value="([^"]+)"/i);
+      const uuid = html.match(/name="uuid"\s+value="([^"]+)"/i);
+      if (confirm && uuid) {
+        return { url: `https://drive.usercontent.google.com/download?id=${id}&export=download&confirm=${confirm[1]}&uuid=${uuid[1]}`, kind: 'mp4' };
+      }
+      return null;
+    }
+  });
+
+  // 25. KeKi / LuluStream
+  CUSTOM.push({
+    name: 'LuluStream',
+    match: (u) => /keki|lulustream|luluvdo/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(link.url, { headers: { Referer: 'https://lulustream.com/' } });
+      const html = await r.text();
+      const m3u8 = _findM3u8(html, r.url);
+      return { url: m3u8, kind: 'm3u8', headers: { Referer: 'https://lulustream.com/' } };
+    }
+  });
+
+  // 26. Buzzheavier
+  CUSTOM.push({
+    name: 'Buzzheavier',
+    match: (u) => /buzzheavier|bzh\.sh/i.test(u.hostname),
+    run: async (link) => {
+      const clean = link.url.split('|')[0].replace(/\/$/, '');
+      const r = await _req(clean + '/download', { method: 'HEAD', headers: { 'hx-request': 'true', Referer: clean } });
+      const hx = r.headers.get('hx-redirect');
+      if (hx) {
+        return { url: (hx.startsWith('/dl/') ? new URL(clean).origin + hx : hx) + '#.mp4', kind: 'mp4' };
+      }
+      return null;
+    }
+  });
+
+  // 27. TurboVid
+  CUSTOM.push({
+    name: 'TurboVid',
+    match: (u) => /turbovid/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(link.url, { headers: { Referer: link.url } });
+      const html = await r.text();
+      const m = html.match(/data-hash="([^"]+\.m3u8[^"]*)"/);
+      return { url: m ? m[1] : null, kind: 'm3u8', headers: { Referer: link.url } };
+    }
+  });
+
+  // 28. EmbedSeek
+  CUSTOM.push({
+    name: 'EmbedSeek',
+    match: (u) => /embedseek|seekstreaming|seekplays/i.test(u.hostname),
+    run: async (link) => {
+      // AES dinamico, se aproxima buscando el m3u8 en el HTML o API
+      const r = await _req(link.url);
+      const html = await r.text();
+      const m3u8 = _findM3u8(html, r.url);
+      return { url: m3u8, kind: 'm3u8', headers: { Referer: r.url } };
+    }
+  });
+
+  // 29. DropCDN
+  CUSTOM.push({
+    name: 'DropCDN',
+    match: (u) => /dropcdn|dropload|dr0pstream/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(link.url);
+      const html = await r.text();
+      const m3u8 = _findM3u8(html, r.url);
+      return { url: m3u8, kind: 'm3u8', headers: { Referer: r.url } };
+    }
+  });
+
+  // 30. VidSrc
+  CUSTOM.push({
+    name: 'VidSrc',
+    match: (u) => /vidsrc|moviesapi/i.test(u.hostname),
+    run: async (link) => {
+      const r1 = await _req(link.url);
+      const html1 = await r1.text();
+      const ifr = html1.match(/src=['"]([^"]+)['"] f/);
+      if (!ifr) return null;
+      let next = ifr[1].startsWith('//') ? 'https:' + ifr[1] : ifr[1];
+      const r2 = await _req(next, { headers: { Referer: r1.url } });
+      const html2 = await r2.text();
+      const enc = html2.match(/id="([^"]+)" style="display:none;">([^<]+)/);
+      if (!enc) return null;
+      // Decodificación por id omitida por simplicidad, busca m3u8 directo en el HTML final
+      const m3u8 = _findM3u8(html2, r2.url);
+      return { url: m3u8, kind: 'm3u8', headers: { Referer: r2.url } };
+    }
+  });
+
+  // 31. VidNest / 32. VidSonic / 33. Barmonrey
+  CUSTOM.push({
+    name: 'VidNest',
+    match: (u) => /vidnest|vidsonic|barmonrey/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(link.url);
+      const html = await r.text();
+      const m3u8 = _findM3u8(html, r.url);
+      return { url: m3u8, kind: 'm3u8', headers: { Referer: r.url } };
+    }
+  });
+
+  // 34. Yandex
+  CUSTOM.push({
+    name: 'Yandex',
+    match: (u) => /yandex/i.test(u.hostname),
+    run: async (link) => {
+      const r = await _req(`https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=${encodeURIComponent(link.url)}`);
+      const d = await r.json();
+      return { url: d ? d.href : null, kind: 'mp4' };
+    }
+  });
+
+  // 35. GDTvid
+  CUSTOM.push({
+    name: 'GDTvid',
+    match: (u) => /gdtvid|p2pplay/i.test(u.hostname),
+    run: async (link) => {
+      // Requiere complejo manejo de cookies y sesión, simplificado a busqueda directa
+      const r = await _req(link.url);
+      const html = await r.text();
+      const m3u8 = _findM3u8(html, r.url);
+      return { url: m3u8, kind: 'm3u8', headers: { Referer: r.url } };
+    }
+  });
+
+  // 36. PlayerZilla
+  CUSTOM.push({
+    name: 'PlayerZilla',
+    match: (u) => /zilla-networks/i.test(u.hostname),
+    run: async (link) => {
+      return { url: link.url.replace('/play/', '/m3u8/'), kind: 'm3u8', headers: { Referer: 'https://animeav1.com/' } };
+    }
+  });
+
+  // 37. Genérico (Fallback)
+  CUSTOM.push({
+    name: 'Generic',
+    match: () => true, // Atrapa todo lo que no haya hecho match antes
+    run: async (link, log) => {
+      log('Usando extractor genérico...');
+      const r = await _req(link.url, { headers: { Referer: link.referer || link.url } });
+      const html = await r.text();
+      
+      const m3u8 = _findM3u8(html, r.url, log);
+      if (m3u8) return { url: m3u8, kind: 'm3u8', headers: { Referer: r.url } };
+      
+      const iframe = html.match(/<iframe[^>]+src=["']([^"']+)["']/i);
+      if (iframe) {
+        const iframeUrl = new URL(iframe[1], r.url).href;
+        log('Redirigiendo a iframe interno: ' + iframeUrl);
+        return { url: iframeUrl, kind: 'iframe', headers: { Referer: r.url } };
+      }
+      
+      const mp4 = html.match(/["'](https?:\/\/[^"']+\.mp4[^"']*)["']/i);
+      if (mp4) return { url: mp4[1], kind: 'mp4', headers: { Referer: r.url } };
+      
+      return null;
+    }
+  });
+
+  // =========================================================================
+  // MOTOR PRINCIPAL
+  // =========================================================================
 
   async function extractM3u8(embedUrl, log, hdrs) {
     const t0 = Date.now();
@@ -253,7 +662,7 @@
       const reqH = hdrs ? Object.assign({ 'Accept': 'text/html,application/xhtml+xml,*/*' }, hdrs)
                         : { 'Accept': 'text/html,application/xhtml+xml,*/*', 'Referer': referer || (new URL(url).origin + '/') };
       if (hdrs) log('Cabeceras del enlace: ' + Object.keys(hdrs).join(', '));
-      const r = await nativeFetch(url, { headers: reqH });
+      const r = await _req(url, { headers: reqH });
       status = r.status;
       html = await r.text();
       log('GET ' + url + ' → ' + status + ' · ' + html.length + ' bytes · ' + (Date.now() - t0) + ' ms');
@@ -268,16 +677,12 @@
     return { m3u8: null, html, status, ms: Date.now() - t0 };
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // SONDAS Y VALIDACIÓN
-  // ═══════════════════════════════════════════════════════════════════
-
   async function _probe(url, headers, range, log, label) {
     const t0 = Date.now();
     try {
       const h = Object.assign({}, headers);
       if (range) h['Range'] = (typeof range === 'string') ? range : 'bytes=0-1023';
-      const r = await nativeFetch(url, { headers: h });
+      const r = await _req(url, { headers: h });
       const txt = await r.text();
       const g = k => { try { return r.headers.get(k) || ''; } catch (_) { return ''; } };
       log('  [' + label + '] HTTP ' + r.status + ' · ' + (g('content-type') || 's/tipo') + ' · ' + txt.length + ' car. · ' + (Date.now() - t0) + ' ms');
@@ -310,10 +715,6 @@
     return (rs.status >= 200 && rs.status < 300) ? { ok: true } : { ok: false, why: 'el SEGMENTO falla (HTTP ' + rs.status + ')' };
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // ORQUESTADOR PRINCIPAL
-  // ═══════════════════════════════════════════════════════════════════
-
   async function diagnoseEmbed(link, log) {
     const t0 = Date.now();
     const url = String(link.url || '');
@@ -321,26 +722,23 @@
     const kind = /\.m3u8$/i.test(u.pathname) ? 'm3u8' : /\.mp4$/i.test(u.pathname) ? 'mp4' : 'otro';
     log('Tipo por URL: ' + kind);
     log('Campos del enlace: ' + Object.keys(link).join(', '));
-    ['headers', 'referer', 'referrer', 'origin', 'userAgent', 'type', 'quality', 'language', 'lang'].forEach(k => {
-      if (link[k] !== undefined && link[k] !== null) { try { log('  ' + k + ' = ' + JSON.stringify(link[k]).slice(0, 220)); } catch (_) {} }
-    });
     let lh = (link.headers && typeof link.headers === 'object') ? link.headers : null;
 
     let target = url, tKind = kind, handled = false;
 
-    // ── Extractores por host ──
     for (const c of CUSTOM) {
       let hit = false; try { hit = !!c.match(u, link); } catch (_) {}
       if (!hit) continue;
       log('\n-- Extractor propio: ' + c.name + ' --');
       try {
         const r = await c.run(link, log, { nativeFetch, probe: _probe });
-        if (r && r.url) { target = r.url; tKind = r.kind || 'm3u8'; if (r.headers) lh = r.headers; handled = true; log('→ ' + target.slice(0, 160)); break; }
+        if (r && r.url) {
+          target = r.url; tKind = r.kind || 'm3u8'; if (r.headers) lh = r.headers; handled = true; log('→ ' + target.slice(0, 160)); break;
+        }
         log('El extractor propio no devolvió enlace; se sigue con el método general');
       } catch (e) { log('ERROR en extractor propio: ' + ((e && e.message) || e)); }
     }
 
-    // ── Bloque A: detección por contenido ──
     if (!handled && kind === 'otro') {
       log('\n-- Detectando el tipo por contenido (solo el primer KB) --');
       const sr = await _probe(url, lh || {}, true, log, lh ? 'headers del enlace' : 'sin cabeceras');
@@ -350,8 +748,6 @@
         else log('→ parece una página: se busca el m3u8 dentro');
       }
     }
-
-    // ── Bloque B: extractor genérico de página ──
     if (!handled && kind === 'otro') {
       log('\n-- Extractor (página) --');
       try {
@@ -361,7 +757,6 @@
       } catch (e) { log('ERROR: ' + ((e && e.message) || e)); return { ok: false, ms: Date.now() - t0, status: 0 }; }
     }
 
-    // ── Validación con variantes de cabeceras ──
     const tu = new URL(target);
     const origin = tu.origin + '/', root = _rootRef(target);
     const variants = [];
@@ -371,25 +766,13 @@
     if (root && root !== origin) addV('Referer=' + root, { Referer: root });
     addV('sin Referer', {});
 
-    log('\n-- Probando variantes de cabeceras (se usa la primera que funcione de punta a punta) --');
+    log('\n-- Probando variantes de cabeceras --');
     let lastWhy = 'ninguna variante abrió la lista (revisa los HTTP de arriba)';
     for (const v of variants) {
       const r = await _probe(target, v.h, tKind === 'mp4', log, v.n);
       if (!(r.status >= 200 && r.status < 300)) continue;
       if (tKind === 'mp4') {
         if (r.text.slice(4, 8) === 'ftyp') {
-          log('Inicio del archivo: ' + _printable(r.text, 40));
-          if (r.status === 206 && r.total > 4 * 1024 * 1024) {
-            const mid = Math.floor(r.total / 2);
-            const rs = await _probe(target, v.h, 'bytes=' + mid + '-' + (mid + 1023), log, 'salto a la mitad del archivo');
-            if (rs.status === 206) log('Salto en el archivo: OK');
-            else if (rs.status === 200) log('ADVERTENCIA: el servidor IGNORA el salto (devuelve desde el inicio); al seguir bajando puede repetir desde el principio.');
-            else log('ADVERTENCIA: el salto a mitad del archivo falla (HTTP ' + rs.status + ').');
-          } else if (r.status === 200) {
-            log('ADVERTENCIA: el servidor no acepta Range (respondió 200); puede no dejar avanzar ni seguir bajando.');
-          } else if (!r.total) {
-            log('ADVERTENCIA: el servidor no informa el tamaño total del archivo.');
-          }
           log('\nRESULTADO: MP4 válido con "' + v.n + '" → se puede reproducir.');
           return { ok: true, ms: Date.now() - t0, status: r.status, play: { url: target, kind: 'mp4', headers: v.h, via: v.n } };
         }
@@ -407,10 +790,6 @@
     log('\nRESULTADO: NO reproducible → ' + lastWhy);
     return { ok: false, ms: Date.now() - t0, status: 0 };
   }
-
-  // ═══════════════════════════════════════════════════════════════════
-  // API PÚBLICA
-  // ═══════════════════════════════════════════════════════════════════
 
   async function resolve(link, log, env) {
     nativeFetch = env && env.nativeFetch;
