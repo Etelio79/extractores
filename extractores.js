@@ -1,13 +1,8 @@
 (function () {
   'use strict';
-  const VERSION = '1.1.2';
+  const VERSION = '1.2.2';
   let _nativeFetch = null;
   
-  // =========================================================================
-  // PREPARACIÓN PARA CRYPTOJS
-  // El index.html ya carga crypto-js.min.js globalmente. 
-  // Aquí lo vinculamos de forma segura para usarlo en los extractores.
-  // =========================================================================
   let CryptoJS = null;
   function initCrypto() {
     if (typeof window !== 'undefined' && window.CryptoJS) {
@@ -100,10 +95,6 @@
     return '';
   }
 
-  // =========================================================================
-  // EXTRACTORES
-  // =========================================================================
-
   async function resolverEmpaquetado(url, referer, siguiendo) {
     const propio = `${origen(url)}/`;
     for (const ref of [...new Set([referer || propio, propio])]) {
@@ -192,7 +183,7 @@
       if (video) return { url: video, kind: 'm3u8', headers: { Referer: url } };
     }
     
-    const directo = html.match(/['"]hls['"]\s*:\s*['"]([^"']+)['"]/i);
+    const directo = html.match(/['"]hls['"]\s*:\s*['"]([^'"]+)['"]/i);
     if (directo) {
       const v = /^aHR0/.test(directo[1]) ? atobSeguro(directo[1]) : directo[1];
       return { url: v, kind: 'm3u8', headers: { Referer: url } };
@@ -200,23 +191,6 @@
     
     return null;
   }
-
-  // =========================================================================
-  // ESPACIO RESERVADO PARA FUTUROS EXTRACTORES CON CRYPTOJS
-  // =========================================================================
-  /*
-  async function resolverFilemoon(url, referer, log) {
-    if (!CryptoJS) { log('CryptoJS no está cargado. Abortando.'); return null; }
-    log('Resolviendo Filemoon usando CryptoJS...');
-    
-    // Ejemplo de cómo usarías CryptoJS aquí:
-    // const palabra = CryptoJS.enc.Utf8.parse('texto');
-    // const hash = CryptoJS.SHA256(palabra).toString();
-    // ... lógica de descifrado ...
-    
-    return null; // Retorna { url, kind, headers } si tiene éxito
-  }
-  */
 
   const CUSTOM = [
     {
@@ -228,27 +202,32 @@
       name: 'Voe',
       match: (u, link) => /voe\.sx|voe-unblock|voeunbl|voeun|v-o-e|voe\./i.test(u.hostname),
       run: async (link, log, referer) => await resolverVoe(link.url, referer || '', log)
-    },
-    // Aquí añadirías Filemoon en el futuro:
-    // {
-    //   name: 'Filemoon',
-    //   match: (u, link) => /filemoon|moonplayer|byse/i.test(u.hostname),
-    //   run: async (link, log, referer) => await resolverFilemoon(link.url, referer || '', log)
-    // }
+    }
   ];
 
   async function resolve(link, log, env) {
     _nativeFetch = env && env.nativeFetch;
     if (typeof _nativeFetch !== 'function') throw new Error('Falta nativeFetch');
     
-    // Inicializamos CryptoJS cada vez que se resuelve un enlace
     if (!CryptoJS) initCrypto();
 
     const t0 = Date.now();
     const url = String(link.url || '');
     let u;
     try { u = new URL(url); } catch (_) { return { ok: false, ms: 0, status: 0 }; }
-    
+
+    // --- NUEVA VALIDACIÓN DE .m3u8 DIRECTO ---
+    if (/\.m3u8$/i.test(u.pathname)) {
+      log('La URL ya es un archivo .m3u8. Se reproduce directamente.');
+      return {
+        ok: true,
+        ms: Date.now() - t0,
+        status: 200,
+        play: { url: url, kind: 'm3u8', headers: link.headers || {} }
+      };
+    }
+    // ------------------------------------------
+
     for (const c of CUSTOM) {
       let hit = false;
       try { hit = !!c.match(u, link); } catch (_) {}
