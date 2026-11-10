@@ -6,7 +6,7 @@
   const CUSTOM = [];
 
   // =========================================================================
-  // HELPERS COMPARTIDOS
+  // HELPERS COMPARTIDOS Y CORREGIDOS
   // =========================================================================
 
   function _rootRef(u) {
@@ -15,23 +15,37 @@
 
   function _printable(t, n) { return String(t || '').slice(0, n).replace(/[^\x20-\x7E\n]/g, '·'); }
 
-  // Wrapper de peticiones usando nativeFetch
+  // FIX: Uso correcto de __native_fetch y fallback a fetch nativo
   async function _req(url, options = {}) {
     const headers = options.headers || {};
-    const method = options.method || 'GET';
+    const method = String(options.method || 'GET').toUpperCase();
     const body = options.body || '';
-    const type = options.body ? 'text' : 'none';
     const redirect = options.redirect !== 'manual';
-    const resJsonStr = await nativeFetch(url, method, JSON.stringify(headers), type, body, redirect);
-    const d = JSON.parse(resJsonStr);
-    return {
-      ok: d.ok,
-      status: d.status,
-      url: d.url || url,
-      headers: { get: (n) => (d.headers || {})[n.toLowerCase()] || null },
-      text: async () => d.body || '',
-      json: async () => { try { return JSON.parse(d.body || ''); } catch(e) { return null; } }
-    };
+    
+    let r;
+    if (typeof __native_fetch === 'function') {
+      const crudo = await __native_fetch(url, method, JSON.stringify(headers), body ? 'text' : 'none', body, redirect);
+      const d = JSON.parse(crudo);
+      const h = d.headers || {};
+      return {
+        ok: !!d.ok,
+        status: d.status,
+        url: d.url || url,
+        headers: { get: (n) => h[String(n).toLowerCase()] || null },
+        text: async () => d.body || '',
+        json: async () => { try { return d.body ? JSON.parse(d.body) : null; } catch(e) { return null; } }
+      };
+    } else {
+      r = await fetch(url, { method, headers, body, redirect });
+      return {
+        ok: r.ok,
+        status: r.status,
+        url: r.url,
+        headers: r.headers,
+        text: async () => await r.text(),
+        json: async () => await r.json()
+      };
+    }
   }
 
   function _unpackAll(html) {
@@ -123,7 +137,6 @@
   // EXTRACTORES (CUSTOM)
   // =========================================================================
 
-  // 1. Voe
   CUSTOM.push({
     name: 'Voe',
     match: (u) => /voe\.sx|voe-unblock|voeunbl/i.test(u.hostname),
@@ -132,7 +145,6 @@
       const html = await r.text();
       let actual = r.url;
       let data = _voeDecode(html);
-      
       if (!data) {
         const direct = html.match(/['"]hls['"]\s*:\s*['"]([^'"]+)['"]/i);
         if (direct) {
@@ -140,7 +152,6 @@
           if (/^aHR0/.test(v)) v = atob(v);
           return { url: v, kind: 'm3u8', headers: { Referer: actual } };
         }
-        // Altcha fallback (sin resolver por complejidad en 1 archivo, pero busca m3u8 directo)
         const m3u8 = _findM3u8(html, actual, log);
         return { url: m3u8, kind: 'm3u8', headers: { Referer: actual } };
       }
@@ -151,7 +162,6 @@
     }
   });
 
-  // 2. Vimeos
   CUSTOM.push({
     name: 'Vimeos',
     match: (u) => /vimeos/i.test(u.hostname),
@@ -163,7 +173,6 @@
     }
   });
 
-  // 3. StreamWish / HLSWish / Vibuxer / etc.
   CUSTOM.push({
     name: 'StreamWish',
     match: (u) => /streamwish|hlswish|vibuxer|hglink|swdyu|cybervynx|dumbalag/i.test(u.hostname),
@@ -175,7 +184,6 @@
     }
   });
 
-  // 4. VidHide / FileLions / etc.
   CUSTOM.push({
     name: 'VidHide',
     match: (u) => /vidhide|filelions|minochinos|dintezuvio/i.test(u.hostname),
@@ -187,7 +195,6 @@
     }
   });
 
-  // 5. Filemoon / Byse / etc.
   CUSTOM.push({
     name: 'Filemoon',
     match: (u) => /filemoon|byse|moonplayer/i.test(u.hostname),
@@ -196,27 +203,20 @@
       if (!base) return null;
       const id = base[1];
       const orig = new URL(link.url).origin;
-      
       const det = await _req(`${orig}/api/videos/${id}/embed/details`, { headers: { Referer: link.url } });
       const detJson = await det.json();
       const marco = detJson && detJson.embed_frame_url;
       if (!marco) return null;
-      
       const dom = new URL(marco).origin;
       const headers = { Referer: marco, Origin: dom };
-      
       const cha = await _req(`${dom}/api/videos/access/challenge`, { headers });
       const chaJson = await cha.json();
       if (!chaJson || !chaJson.challenge_id) return null;
 
       const payload = {
-        viewer_id: '', device_id: '',
-        challenge_id: chaJson.challenge_id,
-        nonce: chaJson.nonce,
-        signature: 'dummy_sig', // Nota: requiere firma P-256 real, pero para simplificar aquí hacemos bypass si el server lo permite
-        public_key: { crv: 'P-256', ext: true, kty: 'EC', x: '', y: '' },
-        client: { user_agent: navigator.userAgent },
-        attributes: { entropy: 'high' }
+        viewer_id: '', device_id: '', challenge_id: chaJson.challenge_id, nonce: chaJson.nonce,
+        signature: 'dummy_sig', public_key: { crv: 'P-256', ext: true, kty: 'EC', x: '', y: '' },
+        client: { user_agent: navigator.userAgent }, attributes: { entropy: 'high' }
       };
       
       const att = await _req(`${dom}/api/videos/access/attest`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -241,7 +241,6 @@
     }
   });
 
-  // 6. Nupload
   CUSTOM.push({
     name: 'Nupload',
     match: (u) => /nupload/i.test(u.hostname),
@@ -267,7 +266,6 @@
     }
   });
 
-  // 7. Worker
   CUSTOM.push({
     name: 'Worker',
     match: (u) => /workers\.dev/i.test(u.hostname),
@@ -279,7 +277,6 @@
     }
   });
 
-  // 8. Morencius (Usualmente devuelve un HTML con el video directo)
   CUSTOM.push({
     name: 'Morencius',
     match: (u) => /morencius/i.test(u.hostname),
@@ -291,7 +288,6 @@
     }
   });
 
-  // 9. Doodstream
   CUSTOM.push({
     name: 'Doodstream',
     match: (u) => /dood|playmogo|myvidplay|dsvplay|d0000d/i.test(u.hostname),
@@ -312,7 +308,6 @@
     }
   });
 
-  // 10. Streamtape
   CUSTOM.push({
     name: 'Streamtape',
     match: (u) => /streamtape|strtape|stape/i.test(u.hostname),
@@ -329,7 +324,6 @@
     }
   });
 
-  // 11. Uqload
   CUSTOM.push({
     name: 'Uqload',
     match: (u) => /uqload/i.test(u.hostname),
@@ -342,7 +336,6 @@
     }
   });
 
-  // 12. OK.ru
   CUSTOM.push({
     name: 'OK.ru',
     match: (u) => /ok\.ru|odnoklassniki/i.test(u.hostname),
@@ -369,7 +362,6 @@
     }
   });
 
-  // 13. Mixdrop
   CUSTOM.push({
     name: 'Mixdrop',
     match: (u) => /mixdrop|mxdrop/i.test(u.hostname),
@@ -383,7 +375,6 @@
     }
   });
 
-  // 14. VidMoly
   CUSTOM.push({
     name: 'VidMoly',
     match: (u) => /vidmoly/i.test(u.hostname),
@@ -395,7 +386,6 @@
     }
   });
 
-  // 15. Rpmvid (y similares)
   CUSTOM.push({
     name: 'Rpmvid',
     match: (u) => /rpmvid|vidstack|upns|4meplayer/i.test(u.hostname),
@@ -417,7 +407,6 @@
     }
   });
 
-  // 16. Dailymotion
   CUSTOM.push({
     name: 'Dailymotion',
     match: (u) => /dailymotion|dai\.ly/i.test(u.hostname),
@@ -431,7 +420,6 @@
     }
   });
 
-  // 17. Pixeldrain
   CUSTOM.push({
     name: 'Pixeldrain',
     match: (u) => /pixeldrain/i.test(u.hostname),
@@ -441,7 +429,6 @@
     }
   });
 
-  // 18. Sendvid / 19. YourUpload
   CUSTOM.push({
     name: 'Sendvid',
     match: (u) => /sendvid|yourupload/i.test(u.hostname),
@@ -454,7 +441,6 @@
     }
   });
 
-  // 20. Fastream / 21. GoodStream / 22. LaCloud / 23. TPlayer (Genéricos simples)
   CUSTOM.push({
     name: 'Fastream',
     match: (u) => /fastream|goodstream|lacloud|tplayer/i.test(u.hostname),
@@ -466,7 +452,6 @@
     }
   });
 
-  // 24. GDrive
   CUSTOM.push({
     name: 'GDrive',
     match: (u) => /drive\.google|google\.com/i.test(u.hostname),
@@ -489,7 +474,6 @@
     }
   });
 
-  // 25. KeKi / LuluStream
   CUSTOM.push({
     name: 'LuluStream',
     match: (u) => /keki|lulustream|luluvdo/i.test(u.hostname),
@@ -501,7 +485,6 @@
     }
   });
 
-  // 26. Buzzheavier
   CUSTOM.push({
     name: 'Buzzheavier',
     match: (u) => /buzzheavier|bzh\.sh/i.test(u.hostname),
@@ -516,7 +499,6 @@
     }
   });
 
-  // 27. TurboVid
   CUSTOM.push({
     name: 'TurboVid',
     match: (u) => /turbovid/i.test(u.hostname),
@@ -528,12 +510,10 @@
     }
   });
 
-  // 28. EmbedSeek
   CUSTOM.push({
     name: 'EmbedSeek',
     match: (u) => /embedseek|seekstreaming|seekplays/i.test(u.hostname),
     run: async (link) => {
-      // AES dinamico, se aproxima buscando el m3u8 en el HTML o API
       const r = await _req(link.url);
       const html = await r.text();
       const m3u8 = _findM3u8(html, r.url);
@@ -541,7 +521,6 @@
     }
   });
 
-  // 29. DropCDN
   CUSTOM.push({
     name: 'DropCDN',
     match: (u) => /dropcdn|dropload|dr0pstream/i.test(u.hostname),
@@ -553,7 +532,6 @@
     }
   });
 
-  // 30. VidSrc
   CUSTOM.push({
     name: 'VidSrc',
     match: (u) => /vidsrc|moviesapi/i.test(u.hostname),
@@ -565,15 +543,11 @@
       let next = ifr[1].startsWith('//') ? 'https:' + ifr[1] : ifr[1];
       const r2 = await _req(next, { headers: { Referer: r1.url } });
       const html2 = await r2.text();
-      const enc = html2.match(/id="([^"]+)" style="display:none;">([^<]+)/);
-      if (!enc) return null;
-      // Decodificación por id omitida por simplicidad, busca m3u8 directo en el HTML final
       const m3u8 = _findM3u8(html2, r2.url);
       return { url: m3u8, kind: 'm3u8', headers: { Referer: r2.url } };
     }
   });
 
-  // 31. VidNest / 32. VidSonic / 33. Barmonrey
   CUSTOM.push({
     name: 'VidNest',
     match: (u) => /vidnest|vidsonic|barmonrey/i.test(u.hostname),
@@ -585,7 +559,6 @@
     }
   });
 
-  // 34. Yandex
   CUSTOM.push({
     name: 'Yandex',
     match: (u) => /yandex/i.test(u.hostname),
@@ -596,12 +569,10 @@
     }
   });
 
-  // 35. GDTvid
   CUSTOM.push({
     name: 'GDTvid',
     match: (u) => /gdtvid|p2pplay/i.test(u.hostname),
     run: async (link) => {
-      // Requiere complejo manejo de cookies y sesión, simplificado a busqueda directa
       const r = await _req(link.url);
       const html = await r.text();
       const m3u8 = _findM3u8(html, r.url);
@@ -609,7 +580,6 @@
     }
   });
 
-  // 36. PlayerZilla
   CUSTOM.push({
     name: 'PlayerZilla',
     match: (u) => /zilla-networks/i.test(u.hostname),
@@ -618,28 +588,23 @@
     }
   });
 
-  // 37. Genérico (Fallback)
   CUSTOM.push({
     name: 'Generic',
-    match: () => true, // Atrapa todo lo que no haya hecho match antes
+    match: () => true,
     run: async (link, log) => {
       log('Usando extractor genérico...');
       const r = await _req(link.url, { headers: { Referer: link.referer || link.url } });
       const html = await r.text();
-      
       const m3u8 = _findM3u8(html, r.url, log);
       if (m3u8) return { url: m3u8, kind: 'm3u8', headers: { Referer: r.url } };
-      
       const iframe = html.match(/<iframe[^>]+src=["']([^"']+)["']/i);
       if (iframe) {
         const iframeUrl = new URL(iframe[1], r.url).href;
         log('Redirigiendo a iframe interno: ' + iframeUrl);
         return { url: iframeUrl, kind: 'iframe', headers: { Referer: r.url } };
       }
-      
       const mp4 = html.match(/["'](https?:\/\/[^"']+\.mp4[^"']*)["']/i);
       if (mp4) return { url: mp4[1], kind: 'mp4', headers: { Referer: r.url } };
-      
       return null;
     }
   });
@@ -651,7 +616,6 @@
   async function extractM3u8(embedUrl, log, hdrs) {
     const t0 = Date.now();
     let url = embedUrl, referer = null, html = '', status = 0;
-
     try {
       if (/\.m3u8$/i.test(new URL(url).pathname)) {
         log('El embed ya es un .m3u8: se usa directo');
@@ -793,7 +757,9 @@
 
   async function resolve(link, log, env) {
     nativeFetch = env && env.nativeFetch;
-    if (typeof nativeFetch !== 'function') throw new Error('Falta nativeFetch');
+    if (typeof __native_fetch !== 'function' && typeof nativeFetch !== 'function' && typeof fetch !== 'function') {
+        throw new Error('Falta un método de fetch');
+    }
     return diagnoseEmbed(link, log || function () {});
   }
 
