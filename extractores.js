@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.2.6';
+  const VERSION = '1.2.4';
   let _nativeFetch = null;
   
   let CryptoJS = null;
@@ -202,11 +202,6 @@
       name: 'Voe',
       match: (u, link) => /voe\.sx|voe-unblock|voeunbl|voeun|v-o-e|voe\./i.test(u.hostname),
       run: async (link, log, referer) => await resolverVoe(link.url, referer || '', log)
-    },
-    {
-      name: 'Fastream',
-      match: (u, link) => /fastream/i.test(u.hostname),
-      run: async (link, log, referer) => await resolverEmpaquetado(link.url, referer || '', false)
     }
   ];
 
@@ -221,19 +216,15 @@
     let u;
     try { u = new URL(url); } catch (_) { return { ok: false, ms: 0, status: 0 }; }
 
-    // --- VALIDACIÓN DE ENLACES DIRECTOS ---
+    // --- VALIDACIÓN DE ENLACES DIRECTOS (.m3u8, .mp4, .mkv) ---
     if (/\.(m3u8|mp4|mkv)$/i.test(u.pathname)) {
-      log('La URL ya es un archivo directo. Inyectando cabeceras...');
+      log('La URL ya es un archivo directo. Inyectando cabeceras de seguridad...');
       
+      // Forzamos User-Agent y Referer para evitar bloqueos de Cloudflare/Workers
       const cabecerasSeguras = Object.assign({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': link.headers?.Referer || origen(url) + '/'
+        'Referer': origen(url) + '/'
       }, link.headers || {});
-
-      const esM3u8 = /\.m3u8$/i.test(u.pathname);
-      
-      // FORZAMOS EL REPRODUCTOR NATIVO (kind: 'mp4') PARA FASTREAM
-      const esFastream = /fastream/i.test(u.hostname);
 
       return {
         ok: true,
@@ -241,8 +232,7 @@
         status: 200,
         play: { 
           url: url, 
-          // Si es fastream, decimos que es mp4 para que index.html use el reproductor nativo en vez de hls.js
-          kind: (esM3u8 && !esFastream) ? 'm3u8' : 'mp4', 
+          kind: /\.m3u8$/i.test(u.pathname) ? 'm3u8' : 'mp4', 
           headers: cabecerasSeguras 
         }
       };
@@ -259,9 +249,7 @@
         const r = await c.run(link, log, link.referer || link.headers?.Referer);
         if (r && r.url) {
           log('→ ' + r.url);
-          // Si el extractor custom devolvió algo, también forzamos nativo si es fastream
-          const forzarNativo = /fastream/i.test(u.hostname);
-          return { ok: true, ms: Date.now() - t0, status: 200, play: { url: r.url, kind: forzarNativo ? 'mp4' : (r.kind || 'm3u8'), headers: r.headers || {} } };
+          return { ok: true, ms: Date.now() - t0, status: 200, play: { url: r.url, kind: r.kind || 'm3u8', headers: r.headers || {} } };
         }
       } catch (e) {
         log('ERROR en extractor: ' + ((e && e.message) || e));
@@ -274,3 +262,4 @@
 
   window.SSExtractors = { version: VERSION, resolve: resolve, custom: CUSTOM };
 })();
+
