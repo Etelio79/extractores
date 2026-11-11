@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.2.4';
+  const VERSION = '1.2.5';
   let _nativeFetch = null;
   
   let CryptoJS = null;
@@ -220,11 +220,15 @@
     if (/\.(m3u8|mp4|mkv)$/i.test(u.pathname)) {
       log('La URL ya es un archivo directo. Inyectando cabeceras de seguridad...');
       
-      // Forzamos User-Agent y Referer para evitar bloqueos de Cloudflare/Workers
       const cabecerasSeguras = Object.assign({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': origen(url) + '/'
+        'Referer': link.headers?.Referer || origen(url) + '/'
       }, link.headers || {});
+
+      const esM3u8 = /\.m3u8$/i.test(u.pathname);
+      
+      // Forzamos el reproductor nativo (kind: 'mp4') para los hosts que bloquean CORS en hls.js
+      const forzarNativo = /fastream/i.test(u.hostname);
 
       return {
         ok: true,
@@ -232,7 +236,9 @@
         status: 200,
         play: { 
           url: url, 
-          kind: /\.m3u8$/i.test(u.pathname) ? 'm3u8' : 'mp4', 
+          // Si es m3u8 y no es fastream, devolvemos 'm3u8'. 
+          // Si es fastream, devolvemos 'mp4' para que index.html use _playNative.
+          kind: (esM3u8 && !forzarNativo) ? 'm3u8' : 'mp4', 
           headers: cabecerasSeguras 
         }
       };
