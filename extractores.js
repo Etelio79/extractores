@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.2.2';
+  const VERSION = '1.2.3';
   let _nativeFetch = null;
   
   let CryptoJS = null;
@@ -216,17 +216,21 @@
     let u;
     try { u = new URL(url); } catch (_) { return { ok: false, ms: 0, status: 0 }; }
 
-    // --- NUEVA VALIDACIÓN DE .m3u8 DIRECTO ---
-    if (/\.m3u8$/i.test(u.pathname)) {
-      log('La URL ya es un archivo .m3u8. Se reproduce directamente.');
+    // --- VALIDACIÓN DE ENLACES DIRECTOS (.m3u8, .mp4, .mkv) ---
+    if (/\.(m3u8|mp4|mkv)$/i.test(u.pathname)) {
+      log('La URL ya es un archivo directo. Se reproduce directamente.');
       return {
         ok: true,
         ms: Date.now() - t0,
         status: 200,
-        play: { url: url, kind: 'm3u8', headers: link.headers || {} }
+        play: { 
+          url: url, 
+          kind: /\.m3u8$/i.test(u.pathname) ? 'm3u8' : 'mp4', 
+          headers: link.headers || {} 
+        }
       };
     }
-    // ------------------------------------------
+    // ----------------------------------------------------------
 
     for (const c of CUSTOM) {
       let hit = false;
