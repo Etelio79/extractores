@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.1.2';
+  const VERSION = '1.1.3';
 const CryptoJS = window.CryptoJS;
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
@@ -134,18 +134,6 @@ function cookies(respuesta) {
   return crudo.split(/,(?=\s*[A-Za-z0-9_.\-]+=)|\n/).map((c) => c.split(';')[0].trim()).filter((c) => c.includes('=')).join('; ');
 }
 
-function conClases(html, clases) {
-  const cuerpo = String(html || '');
-  const inicios = [];
-  const patron = /<[a-z][a-z0-9]*\b[^>]*?\bclass\s*=\s*["']([^"']*)["'][^>]*>/gi;
-  let m;
-  while ((m = patron.exec(cuerpo))) {
-    const tiene = m[1].split(/\s+/);
-    if (clases.every((c) => tiene.includes(c))) inicios.push(m.index);
-  }
-  return inicios.map((inicio, i) => cuerpo.slice(inicio, i + 1 < inicios.length ? inicios[i + 1] : cuerpo.length));
-}
-
 function origen(url) {
   const m = String(url || '').match(/^(https?:\/\/[^/?#]+)/i);
   return m ? m[1] : '';
@@ -173,14 +161,6 @@ function absoluta(url, base) {
   if (u.startsWith('/')) return origen(base) + u;
   const b = String(base || '').replace(/[?#].*$/, '');
   return (/^https?:\/\/[^/]+$/i.test(b) ? `${b}/` : b.replace(/[^/]*$/, '')) + u;
-}
-
-function limpiarHtml(t) {
-  return entidades(String(t || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
-}
-
-function normalizar(t) {
-  return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, ' y ').replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 function desempacar(html) {
@@ -1413,104 +1393,6 @@ const SERVIDORES = [
   [/streamsilk|savefiles|vembed|vidguard|listeamed|bembed|embedseek|tplayer|turbovid|vidsonic|vidnest|dropcdn|barmonrey/i, '', (u, r) => resolverGenerico(u, nombreServidor(u), r, 1)]
 ];
 
-const CALIDADES_URLSET = {
-  vimeos: { h: '720p', n: '480p' },
-  goodstream: { x: '1080p', h: '720p', n: '480p', l: '360p' },
-  vidhide: { n: '720p', l: '480p' },
-  wish: { x: '1080p', h: '1080p', n: '720p', l: '480p' },
-  voe: { n: '720p', l: '360p' }
-};
-
-function calidadUrlset(url) {
-  const familia = /vimeos/.test(url) ? 'vimeos' : /goodstream/.test(url) ? 'goodstream' : /cloudwindow-route/.test(url) ? 'voe' : /minochinos|vidhide|dintezuvio|dramiyos/.test(url) ? 'vidhide' : /premilkyway|hlswish|vibuxer|streamwish/.test(url) ? 'wish' : '';
-  const m = String(url || '').match(/_,([a-z,]+),\.urlset/);
-  if (familia && m) {
-    const partes = m[1].split(',');
-    for (const letra of ['x', 'o', 'h', 'n', 'l']) if (partes.includes(letra) && CALIDADES_URLSET[familia][letra]) return CALIDADES_URLSET[familia][letra];
-  }
-  return calidadTexto((String(url || '').match(/[_\-/](\d{3,4})p/) || [])[0] || '');
-}
-
-async function ligeroWish(url, referer) {
-  const destino = url.replace('hglink.to', 'vibuxer.com');
-  const casa = origen(destino);
-  for (const ref of [...new Set([referer || 'https://embed69.org/', 'https://embed69.org/'])]) {
-    const html = await texto(destino, { headers: { Referer: ref, Origin: origen(ref), 'Accept-Language': 'es-MX,es;q=0.9' } });
-    if (!html) continue;
-    const codigo = `${desempacar(html)}\n${html}`;
-    let video = (html.match(/file\s*:\s*["']([^"']+)["']/i) || [])[1] || '';
-    if (!video) {
-      const bloque = codigo.match(/\{[^{}]*["']?hls[234]["']?\s*:\s*["']([^"']+)["'][^{}]*\}/);
-      if (bloque) {
-        const opciones = {};
-        const par = /["']?(hls[234])["']?\s*:\s*["']([^"']+)["']/g;
-        let m;
-        while ((m = par.exec(bloque[0]))) opciones[m[1]] = m[2];
-        video = opciones.hls4 || opciones.hls3 || opciones.hls2 || '';
-      }
-    }
-    if (!video) video = (codigo.match(/["']([^"']{30,}\.m3u8[^"']*)["']/i) || [])[1] || '';
-    if (video) return enlace(absoluta(video, destino), 'StreamWish', { 'User-Agent': UA, Referer: `${casa}/` });
-  }
-  return [];
-}
-
-async function ligeroGoodstream(url) {
-  const html = await texto(url, { headers: { Referer: 'https://goodstream.one' } });
-  const video = (html.match(/file:\s*"([^"]+)"/) || [])[1];
-  return enlace(video, 'GoodStream', { Referer: url, Origin: 'https://goodstream.one', 'User-Agent': UA });
-}
-
-async function ligeroLacloud(url, referer) {
-  const html = await texto(url, { headers: { Referer: referer || `${origen(url)}/` } });
-  const video = (html.match(/const src\s*=\s*["']([^"']+)["']/) || [])[1];
-  return enlace(video, 'LaCloud', { Referer: url, 'User-Agent': UA });
-}
-
-async function ligeroWaaw(url, referer) {
-  const e = url.replace('/f/', '/e/');
-  const html = await texto(e, { headers: { Referer: referer || `${origen(e)}/` } });
-  const video = (html.match(/https?:\/\/[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*/i) || [])[0] || (html.match(/file\s*:\s*["']([^"']+)["']/i) || [])[1];
-  return enlace(video, 'Netu', { 'User-Agent': UA, Referer: e });
-}
-
-const LIGEROS = [
-  [/goodstream/i, 'GoodStream', (u) => ligeroGoodstream(u)],
-  [/hlswish|streamwish|strwish|vibuxer|hglink|swdyu|cybervynx|dumbalag|premilkyway/i, 'StreamWish', (u, r) => ligeroWish(u, r)],
-  [/voe\.sx|voe-unblock|voeunbl/i, 'Voe', (u, r) => resolverVoe(u, r)],
-  [/vimeos/i, 'Vimeos', (u, r) => resolverVimeos(u, r)],
-  [/lacloud/i, 'LaCloud', (u, r) => ligeroLacloud(u, r)],
-  [/earnvids|earnl\.|vidnova|streamfort/i, 'EarnVids', (u, r) => resolverEmpaquetado(u, 'EarnVids', r, true)],
-  [/vidhide|filelions|minochinos|dintezuvio|dramiyos|dhtpre|mivalyo|dingtezuni|ryderjet|peytonepre|smoothpre/i, 'VidHide', (u, r) => resolverEmpaquetado(u, 'VidHide', r, true)],
-  [/dood|d0000d|ds2play|ds2video|dsvplay|myvidplay|do7go/i, 'Doodstream', (u, r) => resolverDood(u.replace('dsvplay.com', 'd0000d.com'), r)],
-  [/uqload/i, 'Uqload', (u, r) => resolverUqload(u, r)],
-  [/filemoon|bysezejataos|bysezoxexe|bysebuho|byse\./i, 'Filemoon', (u) => resolverByse(u)],
-  [/streamtape|strtape|stape/i, 'Streamtape', (u) => resolverStreamtape(u)],
-  [/mixdrop|mxdrop|m1xdrop/i, 'Mixdrop', (u, r) => resolverMixdrop(u, r)],
-  [/ok\.ru/i, 'OK.ru', (u) => resolverOkru(u)],
-  [/fastream/i, 'Fastream', (u, r) => resolverEmpaquetado(u, 'Fastream', r, true)]
-];
-
-async function resolverLigero(url, referer) {
-  const u = absoluta(url, referer || '');
-  if (/\.(m3u8|mp4)(\?|#|$)/i.test(u)) return enlace(u, nombreServidor(u), referer ? { Referer: referer, 'User-Agent': UA } : { 'User-Agent': UA });
-  const h = dominio(u);
-  const servidor = LIGEROS.find(([patron]) => patron.test(h));
-  if (!servidor) return [];
-  let salida = [];
-  try {
-    salida = await servidor[2](u, referer);
-  } catch (e) {
-    salida = [];
-  }
-  for (const s of salida) {
-    s.servidor = servidor[1];
-    if (!s.calidad) s.calidad = calidadUrlset(s.url);
-    if (!s.calidad && restante() > 15000) s.calidad = await calidadHls(s.url, s.headers);
-  }
-  return salida;
-}
-
 function nombreServidor(url) {
   const h = dominio(url).replace(/^www\./, '');
   for (const [patron, nombre] of SERVIDORES) if (nombre && patron.test(h)) return nombre;
@@ -1556,116 +1438,9 @@ async function resolver(url, referer, profundidad) {
   return salida;
 }
 
-const TMDB_KEY = '439c478a771f35c05022f9feabcca01c';
-
-async function datosTmdb(tmdbId, tipo) {
-  let id = String(tmdbId || '').trim();
-  if (/^tt\d+$/.test(id)) {
-    const f = await json(`https://api.themoviedb.org/3/find/${id}?api_key=${TMDB_KEY}&external_source=imdb_id`);
-    const r = f && (tipo === 'movie' ? f.movie_results : f.tv_results);
-    if (!r || !r[0]) return null;
-    id = String(r[0].id);
-  }
-  const ruta = `https://api.themoviedb.org/3/${tipo}/${id}?api_key=${TMDB_KEY}`;
-  const [es, en] = await Promise.all([
-    json(`${ruta}&language=es-MX&append_to_response=external_ids,alternative_titles`),
-    json(`${ruta}&language=en-US`)
-  ]);
-  if (!es && !en) return null;
-  const a = es || {};
-  const b = en || {};
-  return {
-    id,
-    titulo: a.title || a.name || b.title || b.name || '',
-    ingles: b.title || b.name || '',
-    original: a.original_title || a.original_name || b.original_title || b.original_name || '',
-    anio: String(a.release_date || a.first_air_date || b.release_date || b.first_air_date || '').slice(0, 4),
-    imdb: (a.external_ids && a.external_ids.imdb_id) || a.imdb_id || b.imdb_id || '',
-    alternos: ((a.alternative_titles && (a.alternative_titles.results || a.alternative_titles.titles)) || []).map((x) => ({ pais: x.iso_3166_1 || '', titulo: x.title || '' })),
-    temporadas: (a.seasons || b.seasons || []).map((x) => ({ numero: Number(x.season_number), episodios: Number(x.episode_count) || 0 }))
-  };
-}
-
-function encabezado(datos, tipo, temporada, episodio) {
-  if (tipo === 'tv') return `${datos.titulo} - T${temporada} E${episodio}`;
-  return datos.anio ? `${datos.titulo} (${datos.anio})` : datos.titulo;
-}
-
-function slug(t) {
-  return normalizar(t).replace(/\s+/g, '-');
-}
-
-function titulosPosibles(datos) {
-  const vistos = new Set();
-  return [datos.titulo, datos.ingles, datos.original].filter((t) => {
-    const n = normalizar(t);
-    if (!n || vistos.has(n)) return false;
-    vistos.add(n);
-    return true;
-  });
-}
-
-const RELLENO = new Set(['ver', 'online', 'gratis', 'latino', 'castellano', 'subtitulado', 'espanol', 'audio', 'hd', 'full', 'completa', 'pelicula', 'serie']);
-const VACIAS = new Set(['the', 'and', 'of', 'a', 'el', 'la', 'los', 'las', 'de', 'del', 'y', 'en', 'un', 'una']);
-
-function limpiarTitulo(t) {
-  const n = normalizar(String(t || '').replace(/\([^)]*\)|\[[^\]]*\]/g, ' '));
-  const limpio = n.split(' ').filter((p) => !RELLENO.has(p)).join(' ');
-  return limpio || n;
-}
-
-function parecido(a, b) {
-  const x = limpiarTitulo(a);
-  const y = limpiarTitulo(b);
-  if (!x || !y) return 0;
-  if (x === y) return 1;
-  const [corto, largo] = x.length <= y.length ? [x, y] : [y, x];
-  const contiene = ` ${largo} `.includes(` ${corto} `) ? 0.6 + (0.4 * corto.length) / largo.length : 0;
-  const px = new Set(x.split(' ').filter((p) => !VACIAS.has(p)));
-  const py = new Set(y.split(' ').filter((p) => !VACIAS.has(p)));
-  let comunes = 0;
-  for (const p of px) if (py.has(p)) comunes++;
-  const palabras = px.size && py.size ? comunes / Math.max(px.size, py.size) : 0;
-  return Math.max(contiene, palabras);
-}
-
-function audioDe(t) {
-  const s = normalizar(t);
-  if (!s) return '';
-  if (/latino|\blat\b|latam|mexic|\bmx\b|419|doblaje latino/.test(s)) return 'Latino';
-  if (/castellano|espana|\bcast\b|\besp\b|\bes es\b/.test(s)) return 'Castellano';
-  if (/subtitulad|\bvose\b|\bsub\b|\bsubs\b|\bvo\b|japones|ingles|english|original/.test(s)) return 'Subtitulado';
-  if (/espanol|spanish/.test(s)) return 'Español';
-  return '';
-}
-
-const TELE = typeof __plugin_sleep !== 'function' && typeof __cheerio_load === 'function';
-
-function tarjeta(info) {
-  const s = {
-    name: info.servidor ? `${info.fuente} (${info.servidor})` : info.fuente,
-    title: info.titulo,
-    url: info.url,
-    quality: `Calidad: ${info.calidad || 'Auto'}`,
-    provider: info.fuente
-  };
-  if (info.tamano) s.size = `Tamaño: ${info.tamano}`;
-  if (info.audio) s.language = `Audio: ${info.audio}`;
-  if (TELE) {
-    s.size = [s.quality, s.size].filter(Boolean).join(' • ');
-    s.quality = s.name;
-  }
-  if (info.headers && Object.keys(info.headers).length) s.headers = info.headers;
-  return s;
-}
-
 function pesoCalidad(c) {
   if (/4k/i.test(c)) return 2160;
   return Number((String(c || '').match(/(\d{3,4})p/i) || [])[1]) || 0;
-}
-
-function pesoAudio(a) {
-  return { Latino: 3, 'Español': 2, Castellano: 1 }[a] || 0;
 }
 
 async function directo(item) {
@@ -1673,60 +1448,6 @@ async function directo(item) {
   for (const s of salida) if (!s.calidad) s.calidad = (await calidadHls(s.url, s.headers)) || calidadTexto(s.url);
   return salida;
 }
-
-async function armar(lista, titulo, fuente, ligero) {
-  const vistos = new Set();
-  const resolverItem = (item) => (item.directo ? directo(item) : ligero ? resolverLigero(item.url, item.referer) : resolver(item.url, item.referer));
-  const resultados = await Promise.all(lista.map((item) => conLimite(resolverItem(item).then((salida) => salida.map((s) => Object.assign({}, s, {
-    audio: s.audio || item.audio || '',
-    calidad: s.calidad || item.calidad || '',
-    tamano: s.tamano || item.tamano || '',
-    servidorSitio: item.servidor || ''
-  }))), Math.max(1000, CIERRE - 6000 - transcurrido()), [])));
-  const tarjetas = [];
-  for (const s of [].concat(...resultados)) {
-    if (!s.url || vistos.has(s.url)) continue;
-    vistos.add(s.url);
-    tarjetas.push({
-      orden: pesoAudio(s.audio) * 10000 + pesoCalidad(s.calidad),
-      t: tarjeta({ titulo, calidad: s.calidad, audio: s.audio, tamano: s.tamano, fuente, servidor: s.servidor || s.servidorSitio, url: s.url, headers: s.headers })
-    });
-  }
-  return tarjetas.sort((a, b) => b.orden - a.orden).map((x) => x.t);
-}
-
-async function enCadena(tareas, procesar) {
-  const pendientes = tareas.map((tarea) => Promise.resolve().then(tarea).catch(() => []));
-  for (const pendiente of pendientes) {
-    const lista = await pendiente;
-    if (!lista || !lista.length) continue;
-    const salida = await procesar(lista);
-    if (salida.length) return salida;
-  }
-  return [];
-}
-
-async function enOrden(tareas, procesar) {
-  for (const tarea of tareas) {
-    const lista = await Promise.resolve().then(tarea).catch(() => []);
-    if (!lista || !lista.length) continue;
-    const salida = await procesar(lista);
-    if (salida.length) return salida;
-  }
-  return [];
-}
-
-function limitar(buscador, respaldo) {
-  return (...argumentos) => {
-    inicio = Date.now();
-    caidos.clear();
-    registro = [];
-    const trabajo = conLimite(Promise.resolve().then(() => buscador(...argumentos)), CIERRE, null);
-    return respaldo ? trabajo.then((salida) => (salida && salida.length ? salida : respaldo(salida === null))) : trabajo.then((salida) => salida || []);
-  };
-}
-
-
 
   /* ───────── Punto de entrada que usa la app ───────── */
   async function resolve(link, log, env) {
