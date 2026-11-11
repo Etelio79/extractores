@@ -372,6 +372,23 @@ async function metodoEspejos(sitios, datos, tipo, temporada, episodio) {
   return [];
 }
 
+const __SRV = [
+  [/voe/i, 'Voe'], [/filemoon|moonplayer|byse|kerapoxy|f16px/i, 'Filemoon'],
+  [/streamwish|hglink|vibuxer|hlswish|wishembed|awish|swdyu|strwish|streamhg|dhcplay|wishfast|embedwish|hanerix|cdnwish/i, 'StreamWish'],
+  [/vidhide|filelions|dhtpre|minochinos|ryderjet|vidhidepro/i, 'VidHide'],
+  [/vimeos|vimeus/i, 'Vimeos'], [/morencius/i, 'Morencius'],
+  [/dood|d000d|ds2play/i, 'DoodStream'], [/mixdrop/i, 'MixDrop'], [/streamtape/i, 'StreamTape'],
+  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru']
+];
+function __nombreSrv(url) {
+  let h = '';
+  try { h = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch (_) { return 'Servidor'; }
+  for (const [p, n] of __SRV) if (p.test(h)) return n;
+  const partes = h.split('.');
+  const n = partes.length > 1 ? partes[partes.length - 2] : h;
+  return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Servidor';
+}
+
 const FUENTE = 'Cuevana';
 const BASE = 'https://wv3.cuevana3.eu';
 const EVITAR = /netu|waaw|hqq|jetload/i;
@@ -541,12 +558,10 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         for (const e of lista) {
           if (!e.url || vistos.has(e.url)) continue;
           vistos.add(e.url);
-          let hostName = 'Servidor';
-          try { hostName = new URL(e.url).hostname.replace('www.', '').split('.')[0]; } catch(_) {}
-          hostName = hostName.charAt(0).toUpperCase() + hostName.slice(1);
+          const hostName = __nombreSrv(e.url);
           
           tarjetas.push({
-            name: hostName,
+            name: `${FUENTE} (${hostName})`,
             title: titulo,
             url: e.url,
             quality: `Calidad: Auto`,

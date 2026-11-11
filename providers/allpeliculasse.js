@@ -202,6 +202,23 @@ function limitar(buscador, respaldo) {
   };
 }
 
+const __SRV = [
+  [/voe/i, 'Voe'], [/filemoon|moonplayer|byse|kerapoxy|f16px/i, 'Filemoon'],
+  [/streamwish|hglink|vibuxer|hlswish|wishembed|awish|swdyu|strwish|streamhg|dhcplay|wishfast|embedwish|hanerix|cdnwish/i, 'StreamWish'],
+  [/vidhide|filelions|dhtpre|minochinos|ryderjet|vidhidepro/i, 'VidHide'],
+  [/vimeos|vimeus/i, 'Vimeos'], [/morencius/i, 'Morencius'],
+  [/dood|d000d|ds2play/i, 'DoodStream'], [/mixdrop/i, 'MixDrop'], [/streamtape/i, 'StreamTape'],
+  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru']
+];
+function __nombreSrv(url) {
+  let h = '';
+  try { h = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch (_) { return 'Servidor'; }
+  for (const [p, n] of __SRV) if (p.test(h)) return n;
+  const partes = h.split('.');
+  const n = partes.length > 1 ? partes[partes.length - 2] : h;
+  return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Servidor';
+}
+
 const FUENTE = 'AllpeliculasSE';
 const BASE = 'https://allpeliculas.la';
 const CABECERAS = { Accept: 'application/json, text/plain, */*', Referer: `${BASE}/` };
@@ -266,9 +283,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       if (vistos.has(url)) continue;
       vistos.add(url);
 
-      let hostName = 'Servidor';
-      try { hostName = new URL(url).hostname.replace('www.', '').split('.')[0]; } catch(_) {}
-      hostName = hostName.charAt(0).toUpperCase() + hostName.slice(1);
+      const hostName = __nombreSrv(url);
 
       const audio = audioDe(e.lang) || 'Latino';
       const calidad = calidadTexto(e.quality);
@@ -276,7 +291,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       tarjetas.push({
         orden: pesoAudio(audio) * 10000 + pesoCalidad(calidad),
         t: {
-          name: hostName,
+          name: `${FUENTE} (${hostName})`,
           title: titulo,
           url: url,
           quality: `Calidad: ${calidad || 'Auto'}`,
