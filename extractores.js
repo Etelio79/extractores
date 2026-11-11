@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.2.3';
+  const VERSION = '1.2.4';
   let _nativeFetch = null;
   
   let CryptoJS = null;
@@ -218,7 +218,14 @@
 
     // --- VALIDACIÓN DE ENLACES DIRECTOS (.m3u8, .mp4, .mkv) ---
     if (/\.(m3u8|mp4|mkv)$/i.test(u.pathname)) {
-      log('La URL ya es un archivo directo. Se reproduce directamente.');
+      log('La URL ya es un archivo directo. Inyectando cabeceras de seguridad...');
+      
+      // Forzamos User-Agent y Referer para evitar bloqueos de Cloudflare/Workers
+      const cabecerasSeguras = Object.assign({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': origen(url) + '/'
+      }, link.headers || {});
+
       return {
         ok: true,
         ms: Date.now() - t0,
@@ -226,7 +233,7 @@
         play: { 
           url: url, 
           kind: /\.m3u8$/i.test(u.pathname) ? 'm3u8' : 'mp4', 
-          headers: link.headers || {} 
+          headers: cabecerasSeguras 
         }
       };
     }
