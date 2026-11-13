@@ -221,7 +221,8 @@ const __SRV = [
   [/vidhide|filelions|dhtpre|minochinos|ryderjet|vidhidepro/i, 'VidHide'],
   [/vimeos|vimeus/i, 'Vimeos'], [/morencius/i, 'Morencius'],
   [/dood|d000d|ds2play/i, 'DoodStream'], [/mixdrop/i, 'MixDrop'], [/streamtape/i, 'StreamTape'],
-  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru']
+  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru'],
+  [/wolfstream/i, 'Wolfstream'], [/waaw\.to|hqq\.tv|netu\./i, 'Netu']
 ];
 function __nombreSrv(url) {
   let h = '';
@@ -234,6 +235,24 @@ function __nombreSrv(url) {
 
 const FUENTE = 'EntrePeliculasySeries';
 const BASE = 'https://entrepeliculasyseries.nz';
+
+/* ── Filtros de hosts ── */
+const HOSTS_BLOQUEADOS = /^(?:megaup\.net|1fichier\.com|mediafire\.com|rapidgator\.net|katfile\.com|nitroflare\.com|ddownload\.com|turbobit\.net|uploaded\.net|filefactory\.com|acortalink\.me|acortalink\.net|adf\.ly|adfly\.com|linkvertise\.com|ouo\.io|shrinkme\.io|shorte\.st|clk\.sh)$/i;
+
+function _limpia(s) {
+  return String(s || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+}
+
+function esValido(url, urlOriginal) {
+  if (!url || !/^https?:\/\//i.test(url)) return false;
+  if (/^magnet:/i.test(url)) return false;
+  if (urlOriginal && _limpia(url) === _limpia(urlOriginal)) return false;
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+    if (HOSTS_BLOQUEADOS.test(h)) return false;
+  } catch (_) { return false; }
+  return true;
+}
 
 async function buscar(titulos, tipo) {
   const rutas = (titulo) => [`${BASE}/search?s=${encodeURIComponent(titulo)}`, `${BASE}/${tipo === 'movie' ? 'peliculas' : 'series'}/?page=1&s=${encodeURIComponent(titulo)}`];
@@ -286,20 +305,21 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     const tipo = mediaType === 'movie' ? 'movie' : 'tv';
     const datos = await datosTmdb(tmdbId, tipo);
     if (!datos) return [];
-    
+
     const temporada = Number(season) || 1;
     const episodio = Number(episode) || 1;
-    
+
     let pagina = await buscar(titulosPosibles(datos), tipo);
     if (!pagina) return [];
     if (tipo === 'tv') pagina = await paginaEpisodio(pagina, temporada, episodio);
-    
+
     const html = await texto(pagina, { headers: { Referer: `${BASE}/` } });
     const lista = [];
     const patron = /class=["'][^"']*player-frame[^"']*["'][\s\S]{0,400}?<iframe[^>]+?(?:data-src|src)=["']([^"']+)["']/gi;
     let m;
     while ((m = patron.exec(html))) {
-      lista.push({ url: absoluta(m[1], BASE), referer: pagina });
+      const url = absoluta(m[1], BASE);
+      if (esValido(url, pagina)) lista.push({ url, referer: pagina });
     }
 
     const titulo = encabezado(datos, tipo, temporada, episodio);
