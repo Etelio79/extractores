@@ -152,6 +152,42 @@ function audioDe(t) {
   return '';
 }
 
+const __SRV = [
+  [/voe/i, 'Voe'], [/filemoon|moonplayer|byse|kerapoxy|f16px/i, 'Filemoon'],
+  [/streamwish|hglink|vibuxer|hlswish|wishembed|awish|swdyu|strwish|streamhg|dhcplay|wishfast|embedwish|hanerix|cdnwish/i, 'StreamWish'],
+  [/vidhide|filelions|dhtpre|minochinos|ryderjet|vidhidepro/i, 'VidHide'],
+  [/vimeos|vimeus/i, 'Vimeos'], [/morencius/i, 'Morencius'],
+  [/dood|d000d|ds2play/i, 'DoodStream'], [/mixdrop/i, 'MixDrop'], [/streamtape/i, 'StreamTape'],
+  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru'],
+  [/wolfstream/i, 'Wolfstream'], [/waaw\.to|hqq\.tv|netu\./i, 'Netu']
+];
+function __nombreSrv(url) {
+  let h = '';
+  try { h = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch (_) { return 'Servidor'; }
+  for (const [p, n] of __SRV) if (p.test(h)) return n;
+  const partes = h.split('.');
+  const n = partes.length > 1 ? partes[partes.length - 2] : h;
+  return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Servidor';
+}
+
+/* ── Filtros de hosts ── */
+const HOSTS_BLOQUEADOS = /^(?:megaup\.net|1fichier\.com|mediafire\.com|rapidgator\.net|katfile\.com|nitroflare\.com|ddownload\.com|turbobit\.net|uploaded\.net|filefactory\.com|acortalink\.me|acortalink\.net|adf\.ly|adfly\.com|linkvertise\.com|ouo\.io|shrinkme\.io|shorte\.st|clk\.sh)$/i;
+
+function _limpia(s) {
+  return String(s || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+}
+
+function esValido(url, urlOriginal) {
+  if (!url || !/^https?:\/\//i.test(url)) return false;
+  if (/^magnet:/i.test(url)) return false;
+  if (urlOriginal && _limpia(url) === _limpia(urlOriginal)) return false;
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+    if (HOSTS_BLOQUEADOS.test(h)) return false;
+  } catch (_) { return false; }
+  return true;
+}
+
 const TELE = typeof __plugin_sleep !== 'function' && typeof __cheerio_load === 'function';
 
 function tarjeta(info) {
@@ -230,10 +266,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       for (const o of opciones) {
         const src = (o.match(/data-src=["']([^"']+)["']/) || o.match(/<iframe[^>]+src=["']([^"']+)["']/i) || [])[1];
         if (!src || vistos.has(src)) continue;
+        if (!esValido(src, pagina)) continue;
         vistos.add(src);
-        let host = 'Servidor';
-        try { host = new URL(src).hostname.replace('www.', '').split('.')[0]; } catch (_) {}
-        host = host.charAt(0).toUpperCase() + host.slice(1);
+        const host = __nombreSrv(src);
         const audio = ruta === 'anime' ? '' : 'Latino';
         tarjetas.push({
           orden: pesoAudio(audio) * 10000 + pesoCalidad(''),
