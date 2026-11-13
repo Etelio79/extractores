@@ -173,10 +173,7 @@ async function datosTmdb(tmdbId, tipo) {
     titulo: a.title || a.name || b.title || b.name || '',
     ingles: b.title || b.name || '',
     original: a.original_title || a.original_name || b.original_title || b.original_name || '',
-    anio: String(a.release_date || a.first_air_date || b.release_date || b.first_air_date || '').slice(0, 4),
-    imdb: (a.external_ids && a.external_ids.imdb_id) || a.imdb_id || b.imdb_id || '',
-    alternos: ((a.alternative_titles && (a.alternative_titles.results || a.alternative_titles.titles)) || []).map((x) => ({ pais: x.iso_3166_1 || '', titulo: x.title || '' })),
-    temporadas: (a.seasons || b.seasons || []).map((x) => ({ numero: Number(x.season_number), episodios: Number(x.episode_count) || 0 }))
+    anio: String(a.release_date || a.first_air_date || b.release_date || b.first_air_date || '').slice(0, 4)
   };
 }
 
@@ -237,107 +234,14 @@ function limitar(buscador, respaldo) {
   };
 }
 
-const ROMANOS = { ii: 2, iii: 3, iv: 4, v: 5, vi: 6 };
-
-function esLatino(t) {
-  const s = String(t || '').trim();
-  if (!s) return false;
-  return s.replace(/[^\u0000-\u024f]/g, '').length >= s.length * 0.8;
-}
-
-function titulosAnime(datos) {
-  const alternos = datos.alternos || [];
-  const orden = [
-    ...alternos.filter((x) => ['JP', 'CN', 'KR'].includes(x.pais)).map((x) => x.titulo),
-    datos.original,
-    datos.ingles,
-    datos.titulo,
-    ...alternos.filter((x) => ['US', 'GB', 'MX', 'ES'].includes(x.pais)).map((x) => x.titulo)
-  ];
-  const vistos = new Set();
-  return orden.filter((t) => {
-    const n = normalizar(t);
-    if (!n || !esLatino(t) || vistos.has(n)) return false;
-    vistos.add(n);
-    return true;
-  }).slice(0, 4);
-}
-
-function doblajeDe(nombre) {
-  const s = normalizar(nombre);
-  if (/\blatino\b/.test(s)) return 'Latino';
-  if (/\bcastellano\b/.test(s)) return 'Castellano';
-  return 'Subtitulado';
-}
-
-function temporadaDe(nombre) {
-  const s = normalizar(nombre);
-  const m = s.match(/(?:season|temporada|part|parte|cour)\s*(\d+)/) || s.match(/\b(\d+)(?:st|nd|rd|th)\s+season/) || s.match(/\s(\d{1,2})$/);
-  if (m) return Number(m[1]);
-  const r = s.match(/\b(ii|iii|iv|v|vi)$/);
-  return r ? ROMANOS[r[1]] : 1;
-}
-
-function nombreBase(nombre) {
-  return normalizar(nombre)
-    .replace(/\b(?:audio\s+)?(?:latino|castellano|doblaje|sub\s+espanol|espanol)\b/g, ' ')
-    .replace(/(?:season|temporada|part|parte|cour)\s*\d+/g, ' ')
-    .replace(/\b\d+(?:st|nd|rd|th)\s+season/g, ' ')
-    .replace(/\s\d{1,2}$/, ' ')
-    .replace(/\b(?:ii|iii|iv|v|vi)$/, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function episodioAbsoluto(datos, temporada, episodio) {
-  if (temporada <= 1) return episodio;
-  const previas = (datos.temporadas || []).filter((t) => t.numero >= 1 && t.numero < temporada);
-  if (previas.length < temporada - 1) return 0;
-  return previas.reduce((n, t) => n + t.episodios, 0) + episodio;
-}
-
-async function elegirAnime(buscar, datos, tipo, temporada, episodio) {
-  const absoluto = tipo === 'tv' ? episodioAbsoluto(datos, temporada, episodio) : 1;
-  const mejores = {};
-  for (const consulta of titulosAnime(datos)) {
-    const resultados = await buscar(consulta).catch(() => []);
-    for (const r of resultados) {
-      if (!r || !r.url || !r.nombre) continue;
-      const audio = r.audio || doblajeDe(r.nombre);
-      const sinDoblaje = normalizar(r.nombre).replace(/\b(?:audio\s+)?(?:latino|castellano|doblaje|sub\s+espanol|espanol)\b/g, ' ').replace(/\s+/g, ' ').trim();
-      const exacto = [consulta, datos.titulo, datos.ingles].some((t) => normalizar(t) === sinDoblaje);
-      const puntos = exacto ? 1 : Math.max(parecido(nombreBase(r.nombre), consulta), parecido(nombreBase(r.nombre), datos.titulo), parecido(nombreBase(r.nombre), datos.ingles));
-      if (puntos < 0.8) continue;
-      const suya = exacto ? 1 : temporadaDe(r.nombre);
-      let numero = 0;
-      let extra = 0;
-      if (tipo === 'movie') {
-        numero = 1;
-        extra = /pelicula|movie|film/.test(normalizar(r.nombre)) ? 0.1 : 0;
-      } else if (suya === temporada) {
-        numero = episodio;
-        extra = 0.2;
-      } else if (suya === 1 && temporada > 1 && absoluto) {
-        numero = absoluto;
-      }
-      if (!numero) continue;
-      const total = puntos + extra;
-      const grupo = mejores[audio] || (mejores[audio] = []);
-      if (!grupo.some((x) => x.url === r.url)) grupo.push({ url: r.url, audio, numero, total });
-    }
-    const sub = mejores.Subtitulado;
-    if (sub && sub.some((x) => x.total >= 1.2)) break;
-  }
-  return Object.values(mejores).map((grupo) => grupo.sort((a, b) => b.total - a.total).slice(0, 3));
-}
-
 const __SRV = [
   [/voe/i, 'Voe'], [/filemoon|moonplayer|byse|kerapoxy|f16px/i, 'Filemoon'],
   [/streamwish|hglink|vibuxer|hlswish|wishembed|awish|swdyu|strwish|streamhg|dhcplay|wishfast|embedwish|hanerix|cdnwish/i, 'StreamWish'],
   [/vidhide|filelions|dhtpre|minochinos|ryderjet|vidhidepro/i, 'VidHide'],
   [/vimeos|vimeus/i, 'Vimeos'], [/morencius/i, 'Morencius'],
   [/dood|d000d|ds2play/i, 'DoodStream'], [/mixdrop/i, 'MixDrop'], [/streamtape/i, 'StreamTape'],
-  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru']
+  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru'],
+  [/wolfstream/i, 'Wolfstream'], [/waaw\.to|hqq\.tv|netu\./i, 'Netu']
 ];
 function __nombreSrv(url) {
   let h = '';
@@ -351,6 +255,24 @@ function __nombreSrv(url) {
 const FUENTE = 'MonosChinos';
 const NUEVO = 'https://vww.monoschinos2.net';
 const VIEJO = 'https://monoschinos.st';
+
+/* ── Filtros de hosts ── */
+const HOSTS_BLOQUEADOS = /^(?:megaup\.net|1fichier\.com|mediafire\.com|rapidgator\.net|katfile\.com|nitroflare\.com|ddownload\.com|turbobit\.net|uploaded\.net|filefactory\.com|acortalink\.me|acortalink\.net|adf\.ly|adfly\.com|linkvertise\.com|ouo\.io|shrinkme\.io|shorte\.st|clk\.sh)$/i;
+
+function _limpia(s) {
+  return String(s || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+}
+
+function esValido(url, urlOriginal) {
+  if (!url || !/^https?:\/\//i.test(url)) return false;
+  if (/^magnet:/i.test(url)) return false;
+  if (urlOriginal && _limpia(url) === _limpia(urlOriginal)) return false;
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+    if (HOSTS_BLOQUEADOS.test(h)) return false;
+  } catch (_) { return false; }
+  return true;
+}
 
 function esNuevo(url) {
   return dominio(url) === dominio(NUEVO);
@@ -428,7 +350,10 @@ async function enlaces(pagina) {
     const destino = atobSeguro(m[1]).replace(/^https?:\/\/monoschinos2\.com\/reproductor\?url=/, '');
     if (/^https?:/.test(destino)) urls.push(destino);
   }
-  return [...new Set(urls)].filter((u) => !/rpmplayer\./.test(u)).map((url) => ({ url }));
+  return [...new Set(urls)]
+    .filter((u) => !/rpmplayer\./.test(u))
+    .filter((u) => esValido(u, pagina))
+    .map((url) => ({ url }));
 }
 
 async function getStreams(tmdbId, mediaType, season, episode) {
@@ -436,11 +361,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     const tipo = mediaType === 'movie' ? 'movie' : 'tv';
     const datos = await datosTmdb(tmdbId, tipo);
     if (!datos) return [];
-    
+
     const temporada = tipo === 'tv' ? Number(season) || 1 : 1;
     const episodio = tipo === 'tv' ? Number(episode) || 1 : 1;
     const titulo = encabezado(datos, tipo, temporada, episodio);
-    
+
     const elegidos = await elegirAnime(buscar, datos, tipo, temporada, episodio);
     const tarjetas = [];
     const vistos = new Set();
@@ -449,9 +374,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       for (const c of grupo) {
         const pagina = await episodio(c.url, c.numero).catch(() => null);
         if (!pagina) continue;
-        
+
         const encontrados = await enlaces(pagina).catch(() => []);
-        
+
         for (const e of encontrados) {
           if (!e.url || vistos.has(e.url)) continue;
           vistos.add(e.url);
