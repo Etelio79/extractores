@@ -182,7 +182,8 @@ const __SRV = [
   [/vidhide|filelions|dhtpre|minochinos|ryderjet|vidhidepro/i, 'VidHide'],
   [/vimeos|vimeus/i, 'Vimeos'], [/morencius/i, 'Morencius'],
   [/dood|d000d|ds2play/i, 'DoodStream'], [/mixdrop/i, 'MixDrop'], [/streamtape/i, 'StreamTape'],
-  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru']
+  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru'],
+  [/wolfstream/i, 'Wolfstream'], [/waaw\.to|hqq\.tv|netu\./i, 'Netu']
 ];
 function __nombreSrv(url) {
   let h = '';
@@ -191,6 +192,23 @@ function __nombreSrv(url) {
   const partes = h.split('.');
   const n = partes.length > 1 ? partes[partes.length - 2] : h;
   return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Servidor';
+}
+
+/* ── Filtros de hosts ── */
+const HOSTS_BLOQUEADOS = /^(?:megaup\.net|1fichier\.com|mediafire\.com|rapidgator\.net|katfile\.com|nitroflare\.com|ddownload\.com|turbobit\.net|uploaded\.net|filefactory\.com|acortalink\.me|acortalink\.net|adf\.ly|adfly\.com|linkvertise\.com|ouo\.io|shrinkme\.io|shorte\.st|clk\.sh)$/i;
+
+function _limpia(s) {
+  return String(s || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+}
+
+function esValido(url) {
+  if (!url || !/^https?:\/\//i.test(url)) return false;
+  if (/^magnet:/i.test(url)) return false;
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+    if (HOSTS_BLOQUEADOS.test(h)) return false;
+  } catch (_) { return false; }
+  return true;
 }
 
 const FUENTE = 'HackStore';
@@ -220,7 +238,7 @@ async function metodoDirecto(datos, tipo, temporada, episodio) {
   if (!id) return [];
   const p = await json(`${API_REST}/player?post_id=${id}`, { headers: CABECERAS_API });
   const embeds = Array.isArray(p && p.data) ? p.data : (p && p.data && p.data.embeds) || [];
-  return embeds.filter((e) => e.url).map((e) => ({ url: e.url, audio: audioDe(e.lang) || 'Latino', referer: 'https://hackstore2.com/' }));
+  return embeds.filter((e) => e.url && esValido(e.url)).map((e) => ({ url: e.url, audio: audioDe(e.lang) || 'Latino', referer: 'https://hackstore2.com/' }));
 }
 
 async function metodoRest(datos, tipo, temporada, episodio) {
@@ -239,7 +257,7 @@ async function metodoRest(datos, tipo, temporada, episodio) {
   if (!id) return [];
   const r = await json(`${API_REST}/player?post_id=${id}`);
   const embeds = Array.isArray(r && r.data) ? r.data : (r && r.data && r.data.embeds) || [];
-  return embeds.filter((e) => e.url).map((e) => ({ url: e.url, audio: audioDe(e.lang) || 'Latino', referer: 'https://hackstore2.com/' }));
+  return embeds.filter((e) => e.url && esValido(e.url)).map((e) => ({ url: e.url, audio: audioDe(e.lang) || 'Latino', referer: 'https://hackstore2.com/' }));
 }
 
 async function metodoWp(datos, tipo, temporada, episodio) {
@@ -254,7 +272,7 @@ async function metodoWp(datos, tipo, temporada, episodio) {
     if (!id) return [];
   }
   const r = await json(`${API_WP}/player?postId=${id}`);
-  return ((r && r.data && r.data.embeds) || []).filter((e) => e.url && !/la\.movie/.test(e.url)).map((e) => ({ url: e.url, audio: audioDe(e.lang) || 'Latino', referer: 'https://hackstore.mx/' }));
+  return ((r && r.data && r.data.embeds) || []).filter((e) => e.url && !/la\.movie/.test(e.url) && esValido(e.url)).map((e) => ({ url: e.url, audio: audioDe(e.lang) || 'Latino', referer: 'https://hackstore.mx/' }));
 }
 
 async function getStreams(tmdbId, mediaType, season, episode) {
@@ -262,11 +280,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     const tipo = mediaType === 'movie' ? 'movie' : 'tv';
     const datos = await datosTmdb(tmdbId, tipo);
     if (!datos) return [];
-    
+
     const temporada = Number(season) || 1;
     const episodio = Number(episode) || 1;
     const titulo = encabezado(datos, tipo, temporada, episodio);
-    
+
     const metodos = [metodoDirecto, metodoRest, metodoWp];
     for (const metodo of metodos) {
       const lista = await metodo(datos, tipo, temporada, episodio).catch(() => []);
