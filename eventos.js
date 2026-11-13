@@ -1,9 +1,8 @@
 (function () {
   'use strict';
-  const VERSION = '1.0.2'; // <-- Recuerda subir esto en tu version.json
+  const VERSION = '1.0.2'; // <-- Asegúrate de subir esta versión en tu version.json
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
-  let _nf = null;
-
+  
   const BASE   = 'https://futbollibreplus.st'; 
   const AGENDA = `${BASE}/agenda.php`;
 
@@ -27,7 +26,7 @@
     try {
       if (typeof atob === 'function') {
         let str = s.replace(/-/g, '+').replace(/_/g, '/');
-        while (str.length % 4) str += '=';
+        while (str.length % 4) str += '='; // Añade padding si falta
         const bin = atob(str);
         let out = '';
         for (let i = 0; i < bin.length; i++) out += String.fromCharCode(bin.charCodeAt(i));
@@ -38,6 +37,7 @@
   }
 
   function fechaAgenda(html) {
+    // FIX: [A-Za-záéíóúñ]+ en vez de \w+ para detectar "Miércoles" y "Sábado"
     const m = html.match(/Agenda\s*-\s*[A-Za-záéíóúñ]+\s+(\d{1,2})\s+de\s+([A-Za-záéíóúñ]+)\s+de\s+(\d{4})/i);
     if (!m) return null;
     const mes = MESES[m[2].toLowerCase()];
@@ -71,7 +71,8 @@
   function parsearAgenda(html) {
     const fecha = fechaAgenda(html);
     const eventos = [];
-    // FIX: Acepta cualquier etiqueta <a> en el titulo, no solo <a href="#">
+    
+    // FIX: Acepta cualquier etiqueta <a> en el título, no solo <a href="#">
     const rx = /<li class="([^"]+)">\s*<a[^>]*>\s*([\s\S]*?)\s*<span class="t">(\d{1,2}:\d{2})<\/span><\/a>\s*<ul>([\s\S]*?)<\/ul>\s*<\/li>/g;
     let m;
     
@@ -81,7 +82,7 @@
       const hora  = m[3];
       const canales = parsearCanales(m[4]);
       
-      // FIX: Eliminamos el "if (!canales.length) continue;" para mostrar partidos sin canales
+      // FIX: Quitamos el "if (!canales.length) continue;" para mostrar partidos sin enlaces aún
       
       const partes = bruto.split(':');
       const liga   = partes.length > 1 ? partes[0].trim() : '';
@@ -93,14 +94,16 @@
         match:    match,
         league:   liga || clase,
         flag:     FLAGS[clase] || '⚽',
-        channels: canales // Ahora puede venir vacío []
+        channels: canales // Puede venir vacío []
       });
     }
     return eventos;
   }
 
   async function traer(url, opciones) {
-    if (typeof window.nativeFetch === 'function') return window.nativeFetch(url, opciones);
+    if (typeof window.nativeFetch === 'function') {
+      return window.nativeFetch(url, opciones);
+    }
     return fetch(url, opciones);
   }
 
@@ -109,16 +112,36 @@
       headers: {
         'User-Agent': UA,
         Accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
+        'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8',
         Referer: `${BASE}/`
       }
     };
     
     try {
+      console.log('[Eventos] Buscando en la agenda...');
       const r = await traer(AGENDA, o);
-      if (!r || !r.ok) return [];
+      
+      if (!r || !r.ok) {
+        console.warn('[Eventos] Fallo HTTP:', r ? r.status : 'Sin respuesta');
+        return [];
+      }
+      
       const html = await r.text();
-      return parsearAgenda(html);
+      if (!html || html.length < 500) {
+        console.warn('[Eventos] HTML vacío o bloqueado por Cloudflare.');
+        return [];
+      }
+      
+      const eventos = parsearAgenda(html);
+      if (!eventos.length) {
+        console.warn('[Eventos] Se obtuvo la página, pero la estructura HTML cambió (el regex falló).');
+      } else {
+        console.log('[Eventos] ¡Éxito! Extraídos', eventos.length, 'partidos.');
+      }
+      
+      return eventos;
     } catch (e) {
+      console.warn('[Eventos] Error de red:', e.message);
       return [];
     }
   }
