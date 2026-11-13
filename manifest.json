@@ -144,6 +144,39 @@
       "filename": "providers/monoschinos.js",
       "enabled": true,
       "contentLanguage": ["es"]
+    },
+    {
+      "id": "seriesmetro",
+      "name": "SeriesMetro",
+      "description": "Peliculas y series en Latino desde SeriesMetro.",
+      "version": "1.0.0",
+      "author": "Etelio79",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/seriesmetro.js",
+      "enabled": true,
+      "contentLanguage": ["es"]
+    },
+    {
+      "id": "vimeus",
+      "name": "Vimeus",
+      "description": "Películas y series en Latino desde Vimeus.",
+      "version": "1.0.0",
+      "author": "Etelio79",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/vimeus.js",
+      "enabled": true,
+      "contentLanguage": ["es"]
+    },
+    {
+      "id": "vitaminagg",
+      "name": "VitaminaGG",
+      "description": "Películas y series en Latino desde VitaminaGG.",
+      "version": "1.0.0",
+      "author": "Etelio79",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/vitaminagg.js",
+      "enabled": true,
+      "contentLanguage": ["es"]
     }
   ]
 }
