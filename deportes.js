@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1'; // <-- Recuerda actualizar esto en tu version.json
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
   let _nf = null;
 
@@ -17,10 +17,21 @@
       if (!r || !r.ok) return [];
       
       const html = await r.text();
-      const match = html.match(/"src"\s*:\s*"(https?:\/\/[^"]+\.m3u8[^"]*)"/) || html.match(/"source"\s*:\s*"(https?:\/\/[^"]+\.m3u8[^"]*)"/);
+      
+      // 1. Intentar buscar las variables clásicas
+      let match = html.match(/"src"\s*:\s*"(https?:\/\/[^"]+\.m3u8[^"]*)"/) || 
+                  html.match(/"source"\s*:\s*"(https?:\/\/[^"]+\.m3u8[^"]*)"/) ||
+                  html.match(/"file"\s*:\s*"(https?:\/\/[^"]+\.m3u8[^"]*)"/);
       
       if (match && match[1]) {
         const videoUrl = match[1].replace(/\\\//g, '/');
+        return [{ url: videoUrl, kind: 'hls', headers: { Referer: base + '/', 'User-Agent': UA } }];
+      }
+
+      // 2. FALLBACK: Si lo escondieron, buscar CUALQUIER enlace .m3u8 en el texto
+      const fallbackMatch = html.match(/https?:\/\/[^"'\s\\]+\.m3u8[^"'\s\\]*/i);
+      if (fallbackMatch) {
+        const videoUrl = fallbackMatch[0].replace(/\\\//g, '/');
         return [{ url: videoUrl, kind: 'hls', headers: { Referer: base + '/', 'User-Agent': UA } }];
       }
     } catch (e) {}
