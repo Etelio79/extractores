@@ -227,7 +227,8 @@ const __SRV = [
   [/vidhide|filelions|dhtpre|minochinos|ryderjet|vidhidepro/i, 'VidHide'],
   [/vimeos|vimeus/i, 'Vimeos'], [/morencius/i, 'Morencius'],
   [/dood|d000d|ds2play/i, 'DoodStream'], [/mixdrop/i, 'MixDrop'], [/streamtape/i, 'StreamTape'],
-  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru']
+  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru'],
+  [/wolfstream/i, 'Wolfstream'], [/waaw\.to|hqq\.tv|netu\./i, 'Netu']
 ];
 function __nombreSrv(url) {
   let h = '';
@@ -242,7 +243,7 @@ const FUENTE = 'AresHD';
 const BASE = 'https://areshd.com';
 
 /* ── Filtros de hosts ── */
-const HOSTS_BLOQUEADOS = /^(?:waaw\.to|hqq\.tv|megaup\.net|1fichier\.com|mediafire\.com|rapidgator\.net|katfile\.com|nitroflare\.com|ddownload\.com|turbobit\.net|uploaded\.net|filefactory\.com|acortalink\.me|acortalink\.net|dsvplay\.com|adf\.ly|adfly\.com|linkvertise\.com|ouo\.io|shrinkme\.io|shorte\.st|clk\.sh)$/i;
+const HOSTS_BLOQUEADOS = /^(?:megaup\.net|1fichier\.com|mediafire\.com|rapidgator\.net|katfile\.com|nitroflare\.com|ddownload\.com|turbobit\.net|uploaded\.net|filefactory\.com|acortalink\.me|acortalink\.net|adf\.ly|adfly\.com|linkvertise\.com|ouo\.io|shrinkme\.io|shorte\.st|clk\.sh)$/i;
 
 function _limpia(s) {
   return String(s || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
@@ -251,7 +252,6 @@ function _limpia(s) {
 function esValido(url, urlOriginal) {
   if (!url || !/^https?:\/\//i.test(url)) return false;
   if (/^magnet:/i.test(url)) return false;
-  // Falso positivo: la "solución" apunta al mismo reproductor (Waaw, Hqq, etc.)
   if (urlOriginal && _limpia(url) === _limpia(urlOriginal)) return false;
   try {
     const h = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
@@ -309,7 +309,6 @@ async function enlaces(pagina) {
         const url = (h.match(/var\s+url\s*=\s*'([^']+)'/i) || h.match(/var\s+url\s*=\s*"([^"]+)"/i) || [])[1];
         if (!url) return null;
         const urlFinal = absoluta(url, reproductor);
-        // Filtra falsos positivos (Waaw, Hqq) y hosts muertos antes de devolver
         if (!esValido(urlFinal, reproductor)) return null;
         return { url: urlFinal, audio, referer: `${BASE}/`, servidor: s[2].trim() };
       }).catch(() => null));
