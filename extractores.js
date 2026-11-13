@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.1.3';
+  const VERSION = '1.1.4';
 const CryptoJS = window.CryptoJS;
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
@@ -448,6 +448,12 @@ async function resolverStreamwish(url, referer) {
   const espejos = [`https://hglink.to/e/${id}`, `https://streamwish.to/e/${id}`, `https://vibuxer.com/e/${id}`].filter((e) => dominio(e) !== dominio(url));
   const listas = await Promise.all(espejos.map((e) => resolverEmpaquetado(e, 'StreamWish', referer, true)));
   return listas.find((l) => l.length) || [];
+}
+
+async function resolverLacloud(url, referer) {
+  const html = await texto(url, { headers: { Referer: referer || `${origen(url)}/` } });
+  const video = (html.match(/const src\s*=\s*["']([^"']+)["']/) || [])[1];
+  return enlace(video, 'LaCloud', { Referer: url, 'User-Agent': UA });
 }
 
 const SHA_K = Int32Array.from([0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]);
@@ -1189,6 +1195,37 @@ async function resolverMixdrop(url, referer) {
   return enlace(m && absoluta(m[1], embed), 'Mixdrop', { Referer: `${origen(embed)}/`, 'User-Agent': UA });
 }
 
+async function resolverWolfstream(url, referer) {
+  const casa = origen(url);
+  const html = await texto(url, { headers: { Referer: referer || `${casa}/` } });
+  if (!html) return [];
+  const codigo = `${desempacar(html)}\n${html}`;
+  let video =
+    buscarVideo(codigo, url) ||
+    (codigo.match(/jwplayer\s*\([^)]*\)\s*\.\s*setup\s*\(\s*\{[\s\S]*?file\s*:\s*["']([^"']+)["']/i) || [])[1];
+  if (!video) {
+    const marco = html.match(/<iframe[^>]+src=["']([^"']+)["']/i);
+    if (marco) {
+      const subUrl = absoluta(marco[1], url);
+      const sub = await texto(subUrl, { headers: { Referer: url } });
+      video = buscarVideo(`${desempacar(sub)}\n${sub}`, subUrl);
+    }
+  }
+  return enlace(absoluta(video, url), 'Wolfstream', { Referer: `${casa}/`, 'User-Agent': UA });
+}
+
+async function resolverNetu(url, referer) {
+  const e = url.replace('/f/', '/e/');
+  const casa = origen(e);
+  const html = await texto(e, { headers: { Referer: referer || `${casa}/` } });
+  if (!html) return [];
+  const codigo = `${desempacar(html)}\n${html}`;
+  const video = buscarVideo(codigo, e) ||
+    (codigo.match(/https?:\/\/[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*/i) || [])[0] ||
+    (codigo.match(/file\s*:\s*["']([^"']+)["']/i) || [])[1];
+  return enlace(absoluta(video, e), 'Netu', { Referer: e, 'User-Agent': UA });
+}
+
 async function resolverGenerico(url, servidor, referer, profundidad) {
   const html = await texto(url, { headers: { Referer: referer || `${origen(url)}/` } });
   if (!html) return [];
@@ -1369,14 +1406,20 @@ async function resolverNupload(url) {
 const SERVIDORES = [
   [/voe\.sx|voe-unblock|voeunbl|voeun|v-o-e|voe\./i, 'Voe', (u, r) => resolverVoe(u, r)],
   [/filemoon|moonplayer|kerapoxy|byse|bysezoxexe|bysezejataos|byse[a-z]*|f16px|filemooon|1azayf|smdfs40r/i, 'Filemoon', (u) => resolverByse(u)],
-  [/streamwish|swdyu|wishembed|playerwish|strwish|swhoi|wishfast|sfastwish|hlswish|embedwish|awish|dwish|streamhg|hglink|habetar|mwish|kswplayer|swiftplayers|hanerix|cdnwish|flaswish|obeywish|davioad|jodwish|ghbrisk|dhcplay|iplayerhls|cybervynx|dumbalag|wishonly|streamwishplayer|asnwish|nekowish|neko-stream|multimovies|streamhls|vibuxer|hlswish/i, 'StreamWish', (u, r) => resolverStreamwish(u, r)],
-  [/vidhide|filelions|ryderjet|dintezuvio|mivalyo|dhtpre|peytonepre|smoothpre|vidhidepre|louishide|lylxan|movearnpre|kinoger|alions|azipcdn|nikaplayer|fviplions|vidhidevip|niikaplayerr|callistanise|dinisglows|vidhideplus|vidhidehub|dingtezuni|minochinos/i, 'VidHide', (u, r) => resolverEmpaquetado(u, 'VidHide', r)],
+  [/streamwish|swdyu|wishembed|playerwish|strwish|swhoi|wishfast|sfastwish|hlswish|embedwish|awish|dwish|streamhg|hglink|habetar|mwish|kswplayer|swiftplayers|hanerix|cdnwish|flaswish|obeywish|davioad|jodwish|ghbrisk|dhcplay|iplayerhls|cybervynx|dumbalag|wishonly|streamwishplayer|asnwish|nekowish|neko-stream|multimovies|streamhls|vibuxer|hlswish|premilkyway/i, 'StreamWish', (u, r) => resolverStreamwish(u, r)],
+  [/vidhide|filelions|ryderjet|dintezuvio|mivalyo|dhtpre|peytonepre|smoothpre|vidhidepre|louishide|lylxan|movearnpre|kinoger|alions|azipcdn|nikaplayer|fviplions|vidhidevip|niikaplayerr|callistanise|dinisglows|vidhideplus|vidhidehub|dingtezuni|minochinos|dramiyos/i, 'VidHide', (u, r) => resolverEmpaquetado(u, 'VidHide', r)],
   [/dood|d0000d|d000d|ds2play|ds2video|dooood|doods|do0od|vide0|vidply|all3do|dood\.|d-s\.io|dsvplay|myvidplay|playmogo|do7go/i, 'Doodstream', (u, r) => resolverDood(u, r)],
   [/streamtape|strtape|stape|tapecontent|streamta\.pe|strcloud|streamadblock/i, 'Streamtape', (u) => resolverStreamtape(u)],
   [/uqload|uqloads/i, 'Uqload', (u, r) => resolverUqload(u, r)],
   [/ok\.ru|odnoklassniki/i, 'OK.ru', (u) => resolverOkru(u)],
   [/mixdrop|mxdrop|mixdroop|m1xdrop|mdbekjwqa|mdfx9dc8n/i, 'Mixdrop', (u, r) => resolverMixdrop(u, r)],
   [/vidmoly/i, 'VidMoly', (u) => resolverVidmoly(u)],
+  [/wolfstream/i, 'Wolfstream', (u, r) => resolverWolfstream(u, r)],
+  [/waaw\.to|hqq\.tv|netu\.|hqq\b/i, 'Netu', (u, r) => resolverNetu(u, r)],
+  [/lacloud/i, 'LaCloud', (u, r) => resolverLacloud(u, r)],
+  [/earnvids|earnl\./i, 'EarnVids', (u, r) => resolverEmpaquetado(u, 'EarnVids', r)],
+  [/vidnova/i, 'Vidnova', (u, r) => resolverEmpaquetado(u, 'Vidnova', r)],
+  [/streamfort/i, 'Streamfort', (u, r) => resolverEmpaquetado(u, 'Streamfort', r)],
   [/rpmvid|rpmplay|rpmshare|upns\.|vidstack|cubeembed|uns\.bio|p2pplay|4meplayer|p2pstream|strp2p/i, 'Rpmvid', (u, r) => resolverVidstack(u, r)],
   [/dailymotion|dai\.ly/i, 'Dailymotion', (u) => resolverDailymotion(u)],
   [/pixeldrain/i, 'Pixeldrain', (u) => resolverPixeldrain(u)],
@@ -1461,8 +1504,10 @@ async function directo(item) {
     let u;
     try { u = new URL(url); } catch (_) { return { ok: false, ms: 0, status: 0 }; }
 
-    // Enlace directo (.m3u8 / .mp4 / .mkv)
-    if (/\.(m3u8|mp4|mkv)$/i.test(u.pathname)) {
+    const _LANDING = /^(?:megaup\.net|1fichier\.com|rapidgator\.net|katfile\.com|nitroflare\.com|ddownload\.com|turbobit\.net|uploaded\.net|filefactory\.com|mediafire\.com)$/i;
+    const _esLanding = _LANDING.test(u.hostname) && u.pathname.split('/').filter(Boolean).length >= 2;
+
+    if (/\.(m3u8|mp4|mkv)$/i.test(u.pathname) && !_esLanding) {
       log('La URL ya es un archivo directo.');
       const cab = Object.assign({ 'User-Agent': UA, Referer: u.origin + '/' }, link.headers || {});
       return { ok: true, ms: Date.now() - t0, status: 200, play: { url, kind: /\.m3u8$/i.test(u.pathname) ? 'm3u8' : 'mp4', headers: cab } };
