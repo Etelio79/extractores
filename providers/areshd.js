@@ -241,6 +241,25 @@ function __nombreSrv(url) {
 const FUENTE = 'AresHD';
 const BASE = 'https://areshd.com';
 
+/* ── Filtros de hosts ── */
+const HOSTS_BLOQUEADOS = /^(?:waaw\.to|hqq\.tv|megaup\.net|1fichier\.com|mediafire\.com|rapidgator\.net|katfile\.com|nitroflare\.com|ddownload\.com|turbobit\.net|uploaded\.net|filefactory\.com|acortalink\.me|acortalink\.net|dsvplay\.com|adf\.ly|adfly\.com|linkvertise\.com|ouo\.io|shrinkme\.io|shorte\.st|clk\.sh)$/i;
+
+function _limpia(s) {
+  return String(s || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+}
+
+function esValido(url, urlOriginal) {
+  if (!url || !/^https?:\/\//i.test(url)) return false;
+  if (/^magnet:/i.test(url)) return false;
+  // Falso positivo: la "solución" apunta al mismo reproductor (Waaw, Hqq, etc.)
+  if (urlOriginal && _limpia(url) === _limpia(urlOriginal)) return false;
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+    if (HOSTS_BLOQUEADOS.test(h)) return false;
+  } catch (_) { return false; }
+  return true;
+}
+
 async function buscar(titulos, tipo, anio) {
   let mejor = null;
   let puntos = 0;
@@ -285,15 +304,18 @@ async function enlaces(pagina) {
     for (const s of bloque[1].matchAll(/<li class="pres" data-tr="([^"]+)"[\s\S]*?a class="playr">([^<]+)<\/a>/g)) {
       if (/youtube/i.test(s[2])) continue;
       const reproductor = absoluta(entidades(s[1]), BASE);
-      
+
       tareas.push(texto(reproductor, { headers: { Referer: pagina } }).then((h) => {
         const url = (h.match(/var\s+url\s*=\s*'([^']+)'/i) || h.match(/var\s+url\s*=\s*"([^"]+)"/i) || [])[1];
         if (!url) return null;
-        return { url, audio, referer: `${BASE}/`, servidor: s[2].trim() };
+        const urlFinal = absoluta(url, reproductor);
+        // Filtra falsos positivos (Waaw, Hqq) y hosts muertos antes de devolver
+        if (!esValido(urlFinal, reproductor)) return null;
+        return { url: urlFinal, audio, referer: `${BASE}/`, servidor: s[2].trim() };
       }).catch(() => null));
     }
   });
-  
+
   const listos = await Promise.all(tareas);
   return listos.filter(Boolean);
 }
@@ -303,10 +325,10 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     const tipo = mediaType === 'movie' ? 'movie' : 'tv';
     const datos = await datosTmdb(tmdbId, tipo);
     if (!datos) return [];
-    
+
     const temporada = Number(season) || 1;
     const episodio = Number(episode) || 1;
-    
+
     let pagina = await buscar(titulosPosibles(datos), tipo, datos.anio);
     if (pagina && tipo === 'tv') {
       pagina = await paginaEpisodio(pagina, temporada, episodio);
@@ -315,7 +337,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
     const titulo = encabezado(datos, tipo, temporada, episodio);
     const encontrados = await enlaces(pagina);
-    
+
     const tarjetas = [];
     const vistos = new Set();
 
