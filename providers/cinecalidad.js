@@ -258,6 +258,23 @@ function __nombreSrv(url) {
 const FUENTE = 'CineCalidad';
 const BASES = ['https://www.cinecalidad.vg', 'https://www.cinecalidad.ec'];
 
+/* ── Filtros de hosts ── */
+const HOSTS_BLOQUEADOS = /^(?:megaup\.net|1fichier\.com|mediafire\.com|rapidgator\.net|katfile\.com|nitroflare\.com|ddownload\.com|turbobit\.net|uploaded\.net|filefactory\.com|acortalink\.me|acortalink\.net|dsvplay\.com|adf\.ly|adfly\.com|linkvertise\.com|ouo\.io|shrinkme\.io|shorte\.st|clk\.sh)$/i;
+
+function esValido(destino) {
+  if (!destino) return false;
+  if (/^magnet:/i.test(destino)) return false;
+  if (/\/links\/magnet:/i.test(destino)) return false;
+  if (/youtube\.com|youtu\.be|youtube-nocookie/i.test(destino)) return false;
+  try {
+    const u = new URL(destino);
+    if (!/^https?:$/i.test(u.protocol)) return false;
+    const h = u.hostname.replace(/^www\./, '').toLowerCase();
+    if (HOSTS_BLOQUEADOS.test(h)) return false;
+  } catch (_) { return false; }
+  return true;
+}
+
 async function buscar(base, titulos, tipo) {
   for (const titulo of titulos) {
     const html = await texto(`${base}/?s=${encodeURIComponent(titulo)}`);
@@ -327,10 +344,17 @@ async function seriePorSlug(base, datos) {
 const TRAILER = /youtube\.com|youtu\.be|youtube-nocookie/i;
 
 async function intermedio(url, referer) {
+  if (!url) return '';
+  if (/^magnet:/i.test(url)) return '';
+  if (/\/links\/magnet:/i.test(url)) return '';
   if (!/cinecalidad\./i.test(dominio(url))) return url;
   const html = await texto(url, { headers: { Referer: referer } });
   const destino = (html.match(/id=["']btn_enlace["'][^>]*>[\s\S]*?href=["']([^"']+)["']/i) || html.match(/<iframe[^>]+src=["']([^"']+)["']/i) || [])[1];
-  return destino ? absoluta(destino, url) : '';
+  if (!destino) return '';
+  if (/^magnet:/i.test(destino)) return '';
+  const final = absoluta(destino, url);
+  if (/\/links\/magnet:/i.test(final)) return '';
+  return final;
 }
 
 async function enlacesPagina(html, base, pagina) {
@@ -340,23 +364,24 @@ async function enlacesPagina(html, base, pagina) {
   while ((m = po.exec(html))) {
     if (/dooplay_player_option_trailer/i.test(m[0])) continue;
     const destino = /^https?:/.test(m[1]) ? m[1] : atobSeguro(m[1]);
-    if (/^https?:/.test(destino) && !TRAILER.test(destino)) crudos.push({ url: destino, audio: audioDe(limpiarHtml(m[2])) || 'Latino' });
+    if (esValido(destino)) crudos.push({ url: destino, audio: audioDe(limpiarHtml(m[2])) || 'Latino' });
   }
   const pu = /<a\b[^>]*data-url=["']([A-Za-z0-9+/=]{20,})["'][^>]*>([\s\S]*?)<\/a>/gi;
   while ((m = pu.exec(html))) {
     const destino = atobSeguro(m[1]);
-    if (/^https?:/.test(destino) && !/mediafire/i.test(destino) && !TRAILER.test(destino)) crudos.push({ url: destino, audio: audioDe(limpiarHtml(m[2])) || 'Latino' });
+    if (esValido(destino) && !/mediafire/i.test(destino)) crudos.push({ url: destino, audio: audioDe(limpiarHtml(m[2])) || 'Latino' });
   }
   const ps = /data-src=["']([A-Za-z0-9+/=]{20,})["']/g;
   while ((m = ps.exec(html))) {
     const destino = atobSeguro(m[1]);
-    if (/^https?:/.test(destino) && !TRAILER.test(destino)) crudos.push({ url: destino, audio: 'Latino' });
+    if (esValido(destino)) crudos.push({ url: destino, audio: 'Latino' });
   }
   const vistos = new Set();
   const unicos = crudos.filter((x) => !vistos.has(x.url) && vistos.add(x.url));
   const lista = await Promise.all(unicos.map(async (x) => {
     const url = await intermedio(x.url, pagina).catch(() => '');
-    return url ? { url, audio: x.audio, referer: `${base}/` } : null;
+    if (!url || !esValido(url)) return null;
+    return { url, audio: x.audio, referer: `${base}/` };
   }));
   return lista.filter(Boolean);
 }
