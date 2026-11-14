@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.0.2'; // <-- recuerda actualizar version.json
+  const VERSION = '1.0.3'; // <-- recuerda actualizar version.json
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
   let _nf = null;
 
