@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.0.3'; // <-- Recuerda actualizar esto
+  const VERSION = '1.0.3'; // <-- recuerda actualizar version.json
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
   let _nf = null;
 
@@ -53,6 +53,7 @@
     } catch (e) { return []; }
   }
 
+  // NUEVO: carga la página tal cual y saca el m3u8 (streamtp99a.sbs, streamtp10.com, etc.)
   async function resolverGlobal(url) {
     try {
       const u = new URL(url);
@@ -70,6 +71,7 @@
       let videoUrl = extraerM3u8(html);
       if (!videoUrl) return [];
 
+      // Normaliza el puerto :443 explícito (algunos clientes lo rechazan)
       videoUrl = videoUrl.replace(/:(443)(?=\/)/, '');
 
       return [{
@@ -91,6 +93,7 @@
     const url = String(link.url || '');
     const t0 = Date.now();
 
+    // 1. Video directo (OJO: acepta ?token=...)
     if (/\.(m3u8|mp4|ts|mkv)(\?|#|$)/i.test(url)) {
       log('Enlace directo.');
       return {
@@ -103,6 +106,7 @@
       };
     }
 
+    // 2. Streamx (eventos, canales Firebase)
     if (/streamx/i.test(url)) {
       log('Resolviendo Streamx...');
       const lista = await resolverStreamx(url);
@@ -112,6 +116,7 @@
       }
     }
 
+    // 3. NUEVO: páginas global1.php / streamtp*.sbs / cdnpeer
     if (esPaginaGlobal(url)) {
       log('Resolviendo página global1...');
       const lista = await resolverGlobal(url);
