@@ -4,28 +4,14 @@ const PRESUPUESTO = RELOJ ? 42000 : 25000;
 const CIERRE = RELOJ ? 50000 : 40000;
 let inicio = Date.now();
 
-function esperar(ms) {
-  return RELOJ ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
-}
-
-function transcurrido() {
-  return Date.now() - inicio;
-}
-
-function restante() {
-  return PRESUPUESTO - transcurrido();
-}
+function esperar(ms) { return RELOJ ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve(); }
+function transcurrido() { return Date.now() - inicio; }
+function restante() { return PRESUPUESTO - transcurrido(); }
 
 function conLimite(promesa, ms, valor) {
   let listo = false;
   const fin = Date.now() + ms;
-  const trabajo = Promise.resolve(promesa).then((v) => {
-    listo = true;
-    return v;
-  }, () => {
-    listo = true;
-    return valor;
-  });
+  const trabajo = Promise.resolve(promesa).then((v) => { listo = true; return v; }, () => { listo = true; return valor; });
   if (!RELOJ) return trabajo;
   const reloj = (async () => {
     while (!listo && Date.now() < fin) await esperar(Math.max(1, Math.min(250, fin - Date.now())));
@@ -43,26 +29,30 @@ async function traer(url, opciones) {
   const d = JSON.parse(crudo);
   const h = d.headers || {};
   return {
-    ok: !!d.ok,
-    status: d.status,
-    statusText: d.statusText,
-    url: d.url || url,
+    ok: !!d.ok, status: d.status, statusText: d.statusText, url: d.url || url,
+    tam: (d.body || '').length,
+    escudo: d.status >= 400 && /just a moment|cf-chl|challenge-platform|cf_chl|attention required/i.test(String(d.body || '').slice(0, 6000)),
     headers: { get: (n) => h[String(n).toLowerCase()] || null },
     text: () => Promise.resolve(d.body || ''),
-    json: () => {
-      try {
-        return Promise.resolve(d.body ? JSON.parse(d.body) : null);
-      } catch (e) {
-        return Promise.resolve(null);
-      }
-    }
+    json: () => { try { return Promise.resolve(d.body ? JSON.parse(d.body) : null); } catch (e) { return Promise.resolve(null); } }
   };
 }
 
+const caidos = new Set();
+let registro = [];
+function anotar(t) { if (registro.length < 80) registro.push(String(t).replace(/\s+/g, ' ').trim()); }
+function rutaCorta(url) { return String(url || '').replace(/^https?:\/\/(?:www\.)?/i, '').replace(/[?&]api_key=[^&]+/, '').slice(0, 75); }
+function peso(n) { return n < 1024 ? `${n}B` : `${Math.round(n / 1024)}KB`; }
+
 async function pedir(url, opciones) {
-  if (restante() <= 0) return null;
+  const host = String(url || '').replace(/^https?:\/\//i, '').split(/[/?#]/)[0].toLowerCase();
+  const metodo = String((opciones && opciones.method) || 'GET').toUpperCase();
+  if (caidos.has(host) || restante() <= 0) { anotar(`${metodo} ${rutaCorta(url)} → omitido`); return null; }
+  const comienzo = Date.now();
   const r = await pedirCrudo(url, opciones);
-  if (r && !r.status) return null;
+  const estado = !r ? 'tiempo agotado' : !r.status ? `error de red${r.statusText ? ` (${String(r.statusText).slice(0, 40)})` : ''}` : r.status;
+  if (!(r && r.ok && /themoviedb/.test(host))) anotar(`${metodo} ${rutaCorta(url)} → ${estado}${r && r.status && r.tam !== undefined ? ` · ${peso(r.tam)}` : ''}${r && r.escudo ? ' · Cloudflare' : ''} · ${((Date.now() - comienzo) / 1000).toFixed(1)}s`);
+  if (r && !r.status) { caidos.add(host); return null; }
   return r;
 }
 
@@ -81,32 +71,17 @@ async function pedirCrudo(url, opciones) {
 async function texto(url, opciones) {
   const r = await pedir(url, opciones);
   if (!r || !r.ok) return '';
-  try {
-    return (await conLimite(r.text(), 10000, '')) || '';
-  } catch (e) {
-    return '';
-  }
+  try { return (await conLimite(r.text(), 10000, '')) || ''; } catch (e) { return ''; }
 }
 
 async function json(url, opciones) {
   const t = await texto(url, opciones);
   if (!t) return null;
-  try {
-    return JSON.parse(t);
-  } catch (e) {
-    return null;
-  }
+  try { return JSON.parse(t); } catch (e) { return null; }
 }
 
-function origen(url) {
-  const m = String(url || '').match(/^(https?:\/\/[^/?#]+)/i);
-  return m ? m[1] : '';
-}
-
-function dominio(url) {
-  const m = String(url || '').match(/^(?:https?:)?\/\/([^/?#:]+)/i);
-  return m ? m[1].toLowerCase() : '';
-}
+function origen(url) { const m = String(url || '').match(/^(https?:\/\/[^/?#]+)/i); return m ? m[1] : ''; }
+function dominio(url) { const m = String(url || '').match(/^(?:https?:)?\/\/([^/?#:]+)/i); return m ? m[1].toLowerCase() : ''; }
 
 const ENTIDADES = { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', nbsp: ' ', ntilde: 'ñ', Ntilde: 'Ñ', aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó', uacute: 'ú', Aacute: 'Á', Eacute: 'É', Iacute: 'Í', Oacute: 'Ó', Uacute: 'Ú', uuml: 'ü', iexcl: '¡', iquest: '¿' };
 
@@ -127,32 +102,10 @@ function absoluta(url, base) {
   return (/^https?:\/\/[^/]+$/i.test(b) ? `${b}/` : b.replace(/[^/]*$/, '')) + u;
 }
 
-function limpiarHtml(t) {
-  return entidades(String(t || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
-}
-
-function normalizar(t) {
-  return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, ' y ').replace(/[^a-z0-9]+/g, ' ').trim();
-}
-
-function calidadTexto(t) {
-  const s = String(t || '');
-  if (/2160|4k|uhd/i.test(s)) return '4K';
-  const m = s.match(/(1440|1080|720|480|360|240)\s*p?/i);
-  return m ? `${m[1]}p` : '';
-}
-
-function slug(t) {
-  return normalizar(t).replace(/\s+/g, '-');
-}
-
-function atobSeguro(t) {
-  try {
-    return atob(String(t || '').replace(/\s+/g, ''));
-  } catch (e) {
-    return '';
-  }
-}
+function limpiarHtml(t) { return entidades(String(t || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim(); }
+function normalizar(t) { return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, ' y ').replace(/[^a-z0-9]+/g, ' ').trim(); }
+function atobSeguro(t) { try { return atob(String(t || '').replace(/\s+/g, '')); } catch (e) { return ''; } }
+function calidadTexto(t) { const s = String(t || ''); if (/2160|4k|uhd/i.test(s)) return '4K'; const m = s.match(/(1440|1080|720|480|360|240)\s*p?/i); return m ? `${m[1]}p` : ''; }
 
 const TMDB_KEY = '439c478a771f35c05022f9feabcca01c';
 
@@ -173,113 +126,36 @@ async function datosTmdb(tmdbId, tipo) {
   const a = es || {};
   const b = en || {};
   return {
-    id,
-    titulo: a.title || a.name || b.title || b.name || '',
-    ingles: b.title || b.name || '',
+    id, titulo: a.title || a.name || b.title || b.name || '', ingles: b.title || b.name || '',
     original: a.original_title || a.original_name || b.original_title || b.original_name || '',
-    anio: String(a.release_date || a.first_air_date || b.release_date || b.first_air_date || '').slice(0, 4)
+    anio: String(a.release_date || a.first_air_date || b.release_date || b.first_air_date || '').slice(0, 4),
+    imdb: (a.external_ids && a.external_ids.imdb_id) || a.imdb_id || b.imdb_id || '',
+    alternos: ((a.alternative_titles && (a.alternative_titles.results || a.alternative_titles.titles)) || []).map((x) => ({ pais: x.iso_3166_1 || '', titulo: x.title || '' })),
+    temporadas: (a.seasons || b.seasons || []).map((x) => ({ numero: Number(x.season_number), episodios: Number(x.episode_count) || 0 }))
   };
 }
 
-function encabezado(datos, tipo, temporada, episodio) {
-  if (tipo === 'tv') return `${datos.titulo} - T${temporada} E${episodio}`;
-  return datos.anio ? `${datos.titulo} (${datos.anio})` : datos.titulo;
-}
-
-function titulosPosibles(datos) {
-  const vistos = new Set();
-  return [datos.titulo, datos.ingles, datos.original].filter((t) => {
-    const n = normalizar(t);
-    if (!n || vistos.has(n)) return false;
-    vistos.add(n);
-    return true;
-  });
-}
+function encabezado(datos, tipo, temporada, episodio) { if (tipo === 'tv') return `${datos.titulo} - T${temporada} E${episodio}`; return datos.anio ? `${datos.titulo} (${datos.anio})` : datos.titulo; }
+function slug(t) { return normalizar(t).replace(/\s+/g, '-'); }
+function titulosPosibles(datos) { const vistos = new Set(); return [datos.titulo, datos.ingles, datos.original].filter((t) => { const n = normalizar(t); if (!n || vistos.has(n)) return false; vistos.add(n); return true; }); }
 
 const RELLENO = new Set(['ver', 'online', 'gratis', 'latino', 'castellano', 'subtitulado', 'espanol', 'audio', 'hd', 'full', 'completa', 'pelicula', 'serie']);
 const VACIAS = new Set(['the', 'and', 'of', 'a', 'el', 'la', 'los', 'las', 'de', 'del', 'y', 'en', 'un', 'una']);
 
-function limpiarTitulo(t) {
-  const n = normalizar(String(t || '').replace(/\([^)]*\)|\[[^\]]*\]/g, ' '));
-  const limpio = n.split(' ').filter((p) => !RELLENO.has(p)).join(' ');
-  return limpio || n;
-}
+function limpiarTitulo(t) { const n = normalizar(String(t || '').replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')); const limpio = n.split(' ').filter((p) => !RELLENO.has(p)).join(' '); return limpio || n; }
+function parecido(a, b) { const x = limpiarTitulo(a); const y = limpiarTitulo(b); if (!x || !y) return 0; if (x === y) return 1; const [corto, largo] = x.length <= y.length ? [x, y] : [y, x]; const contiene = ` ${largo} `.includes(` ${corto} `) ? 0.6 + (0.4 * corto.length) / largo.length : 0; const px = new Set(x.split(' ').filter((p) => !VACIAS.has(p))); const py = new Set(y.split(' ').filter((p) => !VACIAS.has(p))); let comunes = 0; for (const p of px) if (py.has(p)) comunes++; const palabras = px.size && py.size ? comunes / Math.max(px.size, py.size) : 0; return Math.max(contiene, palabras); }
+function audioDe(t) { const s = normalizar(t); if (!s) return ''; if (/latino|\blat\b|latam|mexic|\bmx\b|419|doblaje latino/.test(s)) return 'Latino'; if (/castellano|espana|\bcast\b|\besp\b|\bes es\b/.test(s)) return 'Castellano'; if (/subtitulad|\bvose\b|\bsub\b|\bsubs\b|\bvo\b|japones|ingles|english|original/.test(s)) return 'Subtitulado'; if (/espanol|spanish/.test(s)) return 'Español'; return ''; }
 
-function parecido(a, b) {
-  const x = limpiarTitulo(a);
-  const y = limpiarTitulo(b);
-  if (!x || !y) return 0;
-  if (x === y) return 1;
-  const [corto, largo] = x.length <= y.length ? [x, y] : [y, x];
-  const contiene = ` ${largo} `.includes(` ${corto} `) ? 0.6 + (0.4 * corto.length) / largo.length : 0;
-  const px = new Set(x.split(' ').filter((p) => !VACIAS.has(p)));
-  const py = new Set(y.split(' ').filter((p) => !VACIAS.has(p)));
-  let comunes = 0;
-  for (const p of px) if (py.has(p)) comunes++;
-  const palabras = px.size && py.size ? comunes / Math.max(px.size, py.size) : 0;
-  return Math.max(contiene, palabras);
-}
+function limitar(buscador, respaldo) { return (...argumentos) => { inicio = Date.now(); caidos.clear(); registro = []; const trabajo = conLimite(Promise.resolve().then(() => buscador(...argumentos)), CIERRE, null); return respaldo ? trabajo.then((salida) => (salida && salida.length ? salida : respaldo(salida === null))) : trabajo.then((salida) => salida || []); }; }
 
-function audioDe(t) {
-  const s = normalizar(t);
-  if (!s) return '';
-  if (/latino|\blat\b|latam|mexic|\bmx\b|419|doblaje latino/.test(s)) return 'Latino';
-  if (/castellano|espana|\bcast\b|\besp\b|\bes es\b/.test(s)) return 'Castellano';
-  if (/subtitulad|\bvose\b|\bsub\b|\bsubs\b|\bvo\b|japones|ingles|english|original/.test(s)) return 'Subtitulado';
-  if (/espanol|spanish/.test(s)) return 'Español';
-  return '';
-}
-
-function limitar(buscador, respaldo) {
-  return (...argumentos) => {
-    inicio = Date.now();
-    const trabajo = conLimite(Promise.resolve().then(() => buscador(...argumentos)), CIERRE, null);
-    return respaldo ? trabajo.then((salida) => (salida && salida.length ? salida : respaldo(salida === null))) : trabajo.then((salida) => salida || []);
-  };
-}
-
-const __SRV = [
-  [/voe/i, 'Voe'], [/filemoon|moonplayer|byse|kerapoxy|f16px/i, 'Filemoon'],
-  [/streamwish|hglink|vibuxer|hlswish|wishembed|awish|swdyu|strwish|streamhg|dhcplay|wishfast|embedwish|hanerix|cdnwish/i, 'StreamWish'],
-  [/vidhide|filelions|dhtpre|minochinos|ryderjet|vidhidepro/i, 'VidHide'],
-  [/vimeos|vimeus/i, 'Vimeos'], [/morencius/i, 'Morencius'],
-  [/dood|d000d|ds2play/i, 'DoodStream'], [/mixdrop/i, 'MixDrop'], [/streamtape/i, 'StreamTape'],
-  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru']
-];
-function __nombreSrv(url) {
-  let h = '';
-  try { h = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch (_) { return 'Servidor'; }
-  for (const [p, n] of __SRV) if (p.test(h)) return n;
-  const partes = h.split('.');
-  const n = partes.length > 1 ? partes[partes.length - 2] : h;
-  return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Servidor';
-}
-
+/* ══════════════════ BUSCADOR CINECALIDAD ══════════════════ */
 const FUENTE = 'CineCalidad';
 const BASES = ['https://www.cinecalidad.vg', 'https://www.cinecalidad.ec'];
-
-/* ── Filtros de hosts ── */
-const HOSTS_BLOQUEADOS = /^(?:megaup\.net|1fichier\.com|mediafire\.com|rapidgator\.net|katfile\.com|nitroflare\.com|ddownload\.com|turbobit\.net|uploaded\.net|filefactory\.com|acortalink\.me|acortalink\.net|dsvplay\.com|adf\.ly|adfly\.com|linkvertise\.com|ouo\.io|shrinkme\.io|shorte\.st|clk\.sh)$/i;
-
-function esValido(destino) {
-  if (!destino) return false;
-  if (/^magnet:/i.test(destino)) return false;
-  if (/\/links\/magnet:/i.test(destino)) return false;
-  if (/youtube\.com|youtu\.be|youtube-nocookie/i.test(destino)) return false;
-  try {
-    const u = new URL(destino);
-    if (!/^https?:$/i.test(u.protocol)) return false;
-    const h = u.hostname.replace(/^www\./, '').toLowerCase();
-    if (HOSTS_BLOQUEADOS.test(h)) return false;
-  } catch (_) { return false; }
-  return true;
-}
 
 async function buscar(base, titulos, tipo) {
   for (const titulo of titulos) {
     const html = await texto(`${base}/?s=${encodeURIComponent(titulo)}`);
-    let mejor = null;
-    let puntos = 0;
+    let mejor = null, puntos = 0;
     for (const art of html.split(/<article[^>]*class=["'][^"']*\bitem\b/i).slice(1)) {
       const href = (art.match(/<a[^>]+href=["']([^"']+)["']/) || [])[1];
       const nombre = limpiarHtml((art.match(/class=["'][^"']*in_title[^"']*["'][^>]*>([\s\S]*?)<\/div>/) || [])[1]) || entidades((art.match(/<img[^>]+alt=["']([^"']+)["']/) || [])[1] || '');
@@ -288,10 +164,7 @@ async function buscar(base, titulos, tipo) {
       const esSerie = /\/(?:ver-)?serie\//.test(href);
       if (tipo === 'movie' ? !esPeli : !esSerie) continue;
       const s = parecido(nombre, titulo);
-      if (s > puntos) {
-        puntos = s;
-        mejor = absoluta(href, base);
-      }
+      if (s > puntos) { puntos = s; mejor = absoluta(href, base); }
     }
     if (mejor && puntos >= 0.8) return mejor;
   }
@@ -344,17 +217,10 @@ async function seriePorSlug(base, datos) {
 const TRAILER = /youtube\.com|youtu\.be|youtube-nocookie/i;
 
 async function intermedio(url, referer) {
-  if (!url) return '';
-  if (/^magnet:/i.test(url)) return '';
-  if (/\/links\/magnet:/i.test(url)) return '';
   if (!/cinecalidad\./i.test(dominio(url))) return url;
   const html = await texto(url, { headers: { Referer: referer } });
   const destino = (html.match(/id=["']btn_enlace["'][^>]*>[\s\S]*?href=["']([^"']+)["']/i) || html.match(/<iframe[^>]+src=["']([^"']+)["']/i) || [])[1];
-  if (!destino) return '';
-  if (/^magnet:/i.test(destino)) return '';
-  const final = absoluta(destino, url);
-  if (/\/links\/magnet:/i.test(final)) return '';
-  return final;
+  return destino ? absoluta(destino, url) : '';
 }
 
 async function enlacesPagina(html, base, pagina) {
@@ -364,24 +230,23 @@ async function enlacesPagina(html, base, pagina) {
   while ((m = po.exec(html))) {
     if (/dooplay_player_option_trailer/i.test(m[0])) continue;
     const destino = /^https?:/.test(m[1]) ? m[1] : atobSeguro(m[1]);
-    if (esValido(destino)) crudos.push({ url: destino, audio: audioDe(limpiarHtml(m[2])) || 'Latino' });
+    if (/^https?:/.test(destino) && !TRAILER.test(destino)) crudos.push({ url: destino, audio: audioDe(limpiarHtml(m[2])) || 'Latino' });
   }
   const pu = /<a\b[^>]*data-url=["']([A-Za-z0-9+/=]{20,})["'][^>]*>([\s\S]*?)<\/a>/gi;
   while ((m = pu.exec(html))) {
     const destino = atobSeguro(m[1]);
-    if (esValido(destino) && !/mediafire/i.test(destino)) crudos.push({ url: destino, audio: audioDe(limpiarHtml(m[2])) || 'Latino' });
+    if (/^https?:/.test(destino) && !/mediafire/i.test(destino) && !TRAILER.test(destino)) crudos.push({ url: destino, audio: audioDe(limpiarHtml(m[2])) || 'Latino' });
   }
   const ps = /data-src=["']([A-Za-z0-9+/=]{20,})["']/g;
   while ((m = ps.exec(html))) {
     const destino = atobSeguro(m[1]);
-    if (esValido(destino)) crudos.push({ url: destino, audio: 'Latino' });
+    if (/^https?:/.test(destino) && !TRAILER.test(destino)) crudos.push({ url: destino, audio: 'Latino' });
   }
   const vistos = new Set();
   const unicos = crudos.filter((x) => !vistos.has(x.url) && vistos.add(x.url));
   const lista = await Promise.all(unicos.map(async (x) => {
     const url = await intermedio(x.url, pagina).catch(() => '');
-    if (!url || !esValido(url)) return null;
-    return { url, audio: x.audio, referer: `${base}/` };
+    return url ? { url, audio: x.audio, referer: `${base}/` } : null;
   }));
   return lista.filter(Boolean);
 }
@@ -394,7 +259,6 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     const temporada = Number(season) || 1;
     const episodio = Number(episode) || 1;
     const titulo = encabezado(datos, tipo, temporada, episodio);
-    
     const enBase = async (base) => {
       let pagina = await buscar(base, titulosPosibles(datos), tipo);
       let html = '';
@@ -411,10 +275,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
           const nombre = fuenteSerie.replace(/\/+$/, '').split('/').pop();
           const supuesta = `${base}/episodio/${nombre}-${temporada}x${episodio}/`;
           const h = await texto(supuesta, { headers: { Referer: fuenteSerie } });
-          if (h) {
-            pagina = supuesta;
-            html = h;
-          }
+          if (h) { pagina = supuesta; html = h; }
         }
       }
       if (pagina && !html) {
@@ -422,25 +283,20 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         html = await texto(pagina);
       } else if (!pagina && tipo === 'movie') {
         const directo = await porSlug(base, datos);
-        if (directo) {
-          pagina = directo.url;
-          html = directo.html;
-        }
+        if (directo) { pagina = directo.url; html = directo.html; }
       }
       return html ? enlacesPagina(html, base, pagina) : [];
     };
-
+    
     for (const base of BASES) {
       const lista = await enBase(base);
-      if (lista && lista.length > 0) {
-        const tarjetas = [];
+      if (lista.length) {
         const vistos = new Set();
+        const tarjetas = [];
         for (const e of lista) {
           if (!e.url || vistos.has(e.url)) continue;
           vistos.add(e.url);
-
-          const hostName = __nombreSrv(e.url);
-
+          const hostName = (() => { try { const h = new URL(e.url).hostname.replace(/^www\./, '').toLowerCase(); const p = h.split('.'); return p.length > 1 ? p[p.length - 2].charAt(0).toUpperCase() + p[p.length - 2].slice(1) : h; } catch(_) { return 'Servidor'; } })();
           tarjetas.push({
             name: `${FUENTE} (${hostName})`,
             title: titulo,
@@ -454,7 +310,6 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         return tarjetas;
       }
     }
-    
     return [];
   } catch (e) {
     console.log(`[${FUENTE}] ${e.message}`);
