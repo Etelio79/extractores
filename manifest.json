@@ -83,7 +83,7 @@
       "id": "cuevana",
       "name": "Cuevana",
       "description": "Peliculas y series en Latino desde Cuevana.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "Etelio79",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/cuevana_unbuendato.js",
