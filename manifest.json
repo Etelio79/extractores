@@ -54,7 +54,7 @@
       "author": "Etelio79",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/areshd.js",
-      "enabled": true,
+      "enabled": false,
       "contentLanguage": ["es"]
     },
     {
