@@ -4,28 +4,14 @@ const PRESUPUESTO = RELOJ ? 42000 : 25000;
 const CIERRE = RELOJ ? 50000 : 40000;
 let inicio = Date.now();
 
-function esperar(ms) {
-  return RELOJ ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
-}
-
-function transcurrido() {
-  return Date.now() - inicio;
-}
-
-function restante() {
-  return PRESUPUESTO - transcurrido();
-}
+function esperar(ms) { return RELOJ ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve(); }
+function transcurrido() { return Date.now() - inicio; }
+function restante() { return PRESUPUESTO - transcurrido(); }
 
 function conLimite(promesa, ms, valor) {
   let listo = false;
   const fin = Date.now() + ms;
-  const trabajo = Promise.resolve(promesa).then((v) => {
-    listo = true;
-    return v;
-  }, () => {
-    listo = true;
-    return valor;
-  });
+  const trabajo = Promise.resolve(promesa).then((v) => { listo = true; return v; }, () => { listo = true; return valor; });
   if (!RELOJ) return trabajo;
   const reloj = (async () => {
     while (!listo && Date.now() < fin) await esperar(Math.max(1, Math.min(250, fin - Date.now())));
@@ -43,26 +29,30 @@ async function traer(url, opciones) {
   const d = JSON.parse(crudo);
   const h = d.headers || {};
   return {
-    ok: !!d.ok,
-    status: d.status,
-    statusText: d.statusText,
-    url: d.url || url,
+    ok: !!d.ok, status: d.status, statusText: d.statusText, url: d.url || url,
+    tam: (d.body || '').length,
+    escudo: d.status >= 400 && /just a moment|cf-chl|challenge-platform|cf_chl|attention required/i.test(String(d.body || '').slice(0, 6000)),
     headers: { get: (n) => h[String(n).toLowerCase()] || null },
     text: () => Promise.resolve(d.body || ''),
-    json: () => {
-      try {
-        return Promise.resolve(d.body ? JSON.parse(d.body) : null);
-      } catch (e) {
-        return Promise.resolve(null);
-      }
-    }
+    json: () => { try { return Promise.resolve(d.body ? JSON.parse(d.body) : null); } catch (e) { return Promise.resolve(null); } }
   };
 }
 
+const caidos = new Set();
+let registro = [];
+function anotar(t) { if (registro.length < 80) registro.push(String(t).replace(/\s+/g, ' ').trim()); }
+function rutaCorta(url) { return String(url || '').replace(/^https?:\/\/(?:www\.)?/i, '').replace(/[?&]api_key=[^&]+/, '').slice(0, 75); }
+function peso(n) { return n < 1024 ? `${n}B` : `${Math.round(n / 1024)}KB`; }
+
 async function pedir(url, opciones) {
-  if (restante() <= 0) return null;
+  const host = String(url || '').replace(/^https?:\/\//i, '').split(/[/?#]/)[0].toLowerCase();
+  const metodo = String((opciones && opciones.method) || 'GET').toUpperCase();
+  if (caidos.has(host) || restante() <= 0) { anotar(`${metodo} ${rutaCorta(url)} → omitido`); return null; }
+  const comienzo = Date.now();
   const r = await pedirCrudo(url, opciones);
-  if (r && !r.status) return null;
+  const estado = !r ? 'tiempo agotado' : !r.status ? `error de red${r.statusText ? ` (${String(r.statusText).slice(0, 40)})` : ''}` : r.status;
+  if (!(r && r.ok && /themoviedb/.test(host))) anotar(`${metodo} ${rutaCorta(url)} → ${estado}${r && r.status && r.tam !== undefined ? ` · ${peso(r.tam)}` : ''}${r && r.escudo ? ' · Cloudflare' : ''} · ${((Date.now() - comienzo) / 1000).toFixed(1)}s`);
+  if (r && !r.status) { caidos.add(host); return null; }
   return r;
 }
 
@@ -81,78 +71,21 @@ async function pedirCrudo(url, opciones) {
 async function texto(url, opciones) {
   const r = await pedir(url, opciones);
   if (!r || !r.ok) return '';
-  try {
-    return (await conLimite(r.text(), 10000, '')) || '';
-  } catch (e) {
-    return '';
-  }
+  try { return (await conLimite(r.text(), 10000, '')) || ''; } catch (e) { return ''; }
 }
 
 async function json(url, opciones) {
   const t = await texto(url, opciones);
   if (!t) return null;
-  try {
-    return JSON.parse(t);
-  } catch (e) {
-    return null;
-  }
+  try { return JSON.parse(t); } catch (e) { return null; }
 }
 
 function normalizar(t) {
   return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, ' y ').replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-function calidadTexto(t) {
-  const s = String(t || '');
-  if (/2160|4k|uhd/i.test(s)) return '4K';
-  const m = s.match(/(1440|1080|720|480|360|240)\s*p?/i);
-  return m ? `${m[1]}p` : '';
-}
-
-const TMDB_KEY = '439c478a771f35c05022f9feabcca01c';
-
-async function datosTmdb(tmdbId, tipo) {
-  let id = String(tmdbId || '').trim();
-  if (/^tt\d+$/.test(id)) {
-    const f = await json(`https://api.themoviedb.org/3/find/${id}?api_key=${TMDB_KEY}&external_source=imdb_id`);
-    const r = f && (tipo === 'movie' ? f.movie_results : f.tv_results);
-    if (!r || !r[0]) return null;
-    id = String(r[0].id);
-  }
-  const ruta = `https://api.themoviedb.org/3/${tipo}/${id}?api_key=${TMDB_KEY}`;
-  const [es, en] = await Promise.all([
-    json(`${ruta}&language=es-MX&append_to_response=external_ids,alternative_titles`),
-    json(`${ruta}&language=en-US`)
-  ]);
-  if (!es && !en) return null;
-  const a = es || {};
-  const b = en || {};
-  return {
-    id,
-    titulo: a.title || a.name || b.title || b.name || '',
-    ingles: b.title || b.name || '',
-    original: a.original_title || a.original_name || b.original_title || b.original_name || '',
-    anio: String(a.release_date || a.first_air_date || b.release_date || b.first_air_date || '').slice(0, 4)
-  };
-}
-
-function encabezado(datos, tipo, temporada, episodio) {
-  if (tipo === 'tv') return `${datos.titulo} - T${temporada} E${episodio}`;
-  return datos.anio ? `${datos.titulo} (${datos.anio})` : datos.titulo;
-}
-
-function titulosPosibles(datos) {
-  const vistos = new Set();
-  return [datos.titulo, datos.ingles, datos.original].filter((t) => {
-    const n = normalizar(t);
-    if (!n || vistos.has(n)) return false;
-    vistos.add(n);
-    return true;
-  });
-}
-
-const RELLENO = new Set(['ver', 'online', 'gratis', 'latino', 'castellano', 'subtitulado', 'espanol', 'audio', 'hd', 'full', 'completa', 'pelicula', 'serie']);
 const VACIAS = new Set(['the', 'and', 'of', 'a', 'el', 'la', 'los', 'las', 'de', 'del', 'y', 'en', 'un', 'una']);
+const RELLENO = new Set(['ver', 'online', 'gratis', 'latino', 'castellano', 'subtitulado', 'espanol', 'audio', 'hd', 'full', 'completa', 'pelicula', 'serie']);
 
 function limpiarTitulo(t) {
   const n = normalizar(String(t || '').replace(/\([^)]*\)|\[[^\]]*\]/g, ' '));
@@ -185,40 +118,116 @@ function audioDe(t) {
   return '';
 }
 
-function pesoCalidad(c) {
-  if (/4k/i.test(c)) return 2160;
-  return Number((String(c || '').match(/(\d{3,4})p/i) || [])[1]) || 0;
+function calidadTexto(t) {
+  const s = String(t || '');
+  if (/2160|4k|uhd/i.test(s)) return '4K';
+  const m = s.match(/(1440|1080|720|480|360|240)\s*p?/i);
+  return m ? `${m[1]}p` : '';
 }
 
-function pesoAudio(a) {
-  return { Latino: 3, 'Español': 2, Castellano: 1 }[a] || 0;
-}
+const TMDB_KEY = '439c478a771f35c05022f9feabcca01c';
 
-function limitar(buscador, respaldo) {
-  return (...argumentos) => {
-    inicio = Date.now();
-    const trabajo = conLimite(Promise.resolve().then(() => buscador(...argumentos)), CIERRE, null);
-    return respaldo ? trabajo.then((salida) => (salida && salida.length ? salida : respaldo(salida === null))) : trabajo.then((salida) => salida || []);
+async function datosTmdb(tmdbId, tipo) {
+  let id = String(tmdbId || '').trim();
+  if (/^tt\d+$/.test(id)) {
+    const f = await json(`https://api.themoviedb.org/3/find/${id}?api_key=${TMDB_KEY}&external_source=imdb_id`);
+    const r = f && (tipo === 'movie' ? f.movie_results : f.tv_results);
+    if (!r || !r[0]) return null;
+    id = String(r[0].id);
+  }
+  const ruta = `https://api.themoviedb.org/3/${tipo}/${id}?api_key=${TMDB_KEY}`;
+  const [es, en] = await Promise.all([
+    json(`${ruta}&language=es-MX&append_to_response=external_ids,alternative_titles`),
+    json(`${ruta}&language=en-US`)
+  ]);
+  if (!es && !en) return null;
+  const a = es || {};
+  const b = en || {};
+  return {
+    id,
+    titulo: a.title || a.name || b.title || b.name || '',
+    ingles: b.title || b.name || '',
+    original: a.original_title || a.original_name || b.original_title || b.original_name || '',
+    anio: String(a.release_date || a.first_air_date || b.release_date || b.first_air_date || '').slice(0, 4),
+    imdb: (a.external_ids && a.external_ids.imdb_id) || a.imdb_id || b.imdb_id || '',
+    alternos: ((a.alternative_titles && (a.alternative_titles.results || a.alternative_titles.titles)) || []).map((x) => ({ pais: x.iso_3166_1 || '', titulo: x.title || '' })),
+    temporadas: (a.seasons || b.seasons || []).map((x) => ({ numero: Number(x.season_number), episodios: Number(x.episode_count) || 0 }))
   };
 }
 
-const __SRV = [
-  [/voe/i, 'Voe'], [/filemoon|moonplayer|byse|kerapoxy|f16px/i, 'Filemoon'],
-  [/streamwish|hglink|vibuxer|hlswish|wishembed|awish|swdyu|strwish|streamhg|dhcplay|wishfast|embedwish|hanerix|cdnwish/i, 'StreamWish'],
-  [/vidhide|filelions|dhtpre|minochinos|ryderjet|vidhidepro/i, 'VidHide'],
-  [/vimeos|vimeus/i, 'Vimeos'], [/morencius/i, 'Morencius'],
-  [/dood|d000d|ds2play/i, 'DoodStream'], [/mixdrop/i, 'MixDrop'], [/streamtape/i, 'StreamTape'],
-  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru']
-];
-function __nombreSrv(url) {
-  let h = '';
-  try { h = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch (_) { return 'Servidor'; }
-  for (const [p, n] of __SRV) if (p.test(h)) return n;
-  const partes = h.split('.');
-  const n = partes.length > 1 ? partes[partes.length - 2] : h;
-  return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Servidor';
+function encabezado(datos, tipo, temporada, episodio) {
+  if (tipo === 'tv') return `${datos.titulo} - T${temporada} E${episodio}`;
+  return datos.anio ? `${datos.titulo} (${datos.anio})` : datos.titulo;
 }
 
+function titulosPosibles(datos) {
+  const vistos = new Set();
+  return [datos.titulo, datos.ingles, datos.original].filter((t) => {
+    const n = normalizar(t);
+    if (!n || vistos.has(n)) return false;
+    vistos.add(n);
+    return true;
+  });
+}
+
+/* ── Nombres de servidores para la interfaz ── */
+const _HOSTERS = [
+  ['streamwish','StreamWish'],['hlswish','StreamWish'],['wishembed','StreamWish'],['vibuxer','StreamWish'],['awish','StreamWish'],
+  ['voe','Voe'],['nupload','Nupload'],['yourupload','YourUpload'],['hqq','Hqq'],['netu','Hqq'],
+  ['filemoon','Filemoon'],['moonplayer','Filemoon'],['doodstream','DoodStream'],['dood','DoodStream'],['d0000d','DoodStream'],['ds2play','DoodStream'],
+  ['vidhide','VidHide'],['filelions','FileLions'],['mixdrop','MixDrop'],['mxdrop','MixDrop'],['streamtape','StreamTape'],['strtape','StreamTape'],
+  ['uqload','Uqload'],['mp4upload','Mp4Upload'],['ok.ru','OK.ru'],['fembed','Fembed'],['upstream','Upstream'],
+  ['vimeo','Vimeo'],['pixeldrain','Pixeldrain'],['sendvid','Sendvid'],['lulustream','LuluStream'],
+  ['vidguard','VidGuard'],['listeamed','VidGuard'],['vidmoly','Vidmoly'],['dailymotion','Dailymotion'],
+  ['rpmvid','Rpmvid'],['rpmplay','Rpmvid'],['embed69','Embed69'],['xupalace','Xupalace']
+];
+
+function nombreServidor(url) {
+  const m = String(url || '').match(/^(?:https?:)?\/\/([^/?#:]+)/i);
+  const h = m ? m[1].toLowerCase().replace(/^www\./, '') : '';
+  for (const [patron, nombre] of _HOSTERS) if (h.includes(patron)) return nombre;
+  const partes = h.split('.');
+  const n = partes.length > 1 ? partes[partes.length - 2] : h;
+  return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Directo';
+}
+
+/* ── Armar tarjetas SIN resolver ── */
+async function armar(lista, titulo, fuente) {
+  const vistos = new Set();
+  const tarjetas = [];
+  for (const item of lista) {
+    if (!item.url || vistos.has(item.url)) continue;
+    vistos.add(item.url);
+    
+    const s = {
+      name: item.servidor ? `${fuente} (${item.servidor})` : fuente,
+      title: titulo,
+      url: item.url,
+      quality: `Calidad: ${item.calidad || 'Auto'}`,
+      provider: fuente
+    };
+    if (item.audio) s.language = `Audio: ${item.audio}`;
+    if (item.referer) s.headers = { Referer: item.referer, 'User-Agent': UA };
+
+    tarjetas.push({
+      orden: (item.audio === 'Latino' ? 30000 : item.audio === 'Español' ? 20000 : 0) + (Number((item.calidad||'').match(/\d+/)) || 0),
+      t: s
+    });
+  }
+  return tarjetas.sort((a, b) => b.orden - a.orden).map((x) => x.t);
+}
+
+function limitar(buscador) {
+  return (...argumentos) => {
+    inicio = Date.now();
+    caidos.clear();
+    registro = [];
+    const trabajo = conLimite(Promise.resolve().then(() => buscador(...argumentos)), CIERRE, null);
+    return trabajo.then((salida) => salida || []);
+  };
+}
+
+/* ══════════════════ BUSCADOR ALLPELICULAS ══════════════════ */
 const FUENTE = 'AllpeliculasSE';
 const BASE = 'https://allpeliculas.la';
 const CABECERAS = { Accept: 'application/json, text/plain, */*', Referer: `${BASE}/` };
@@ -250,6 +259,7 @@ async function buscarPost(datos, tipo) {
   return puntos >= 0.8 ? mejor : null;
 }
 
+/* ══════════════════ PUNTO DE ENTRADA ══════════════════ */
 async function getStreams(tmdbId, mediaType, season, episode) {
   try {
     const tipo = mediaType === 'movie' ? 'movie' : 'tv';
@@ -258,9 +268,10 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     
     const temporada = Number(season) || 1;
     const episodio = Number(episode) || 1;
+    
     const post = await buscarPost(datos, tipo);
     if (!post) return [];
-
+    
     let id = post._id;
     if (tipo === 'tv') {
       const r = await json(`${BASE}/wp-api/v1/single/episodes/list?_id=${post._id}&season=${temporada}&postsPerPage=100&page=1`, { headers: CABECERAS });
@@ -268,42 +279,21 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       if (!ep) return [];
       id = ep._id;
     }
-
-    const r = await json(`${BASE}/wp-api/v1/player?postId=${id}&demo=0`, { headers: CABECERAS });
-    const d = (r && r.data) || {};
-    const titulo = encabezado(datos, tipo, temporada, episodio);
     
-    const vistos = new Set();
-    const tarjetas = [];
-
-    for (const e of (d.embeds || [])) {
-      if (!e.url || !/^https?:/.test(e.url) || e.server === 'Torrent' || /\.torrent|^magnet:/i.test(e.url)) continue;
+    const r = await json(`${BASE}/wp-api/v1/player?postId=${id}&demo=0`, { headers: CABECERAS });
+    
+    // Extraer los embeds de la respuesta de la API
+    const lista = ((r && r.data && r.data.embeds) || [])
+      .filter((e) => e.url && /^https?:/.test(e.url) && e.server !== 'Torrent' && !/\.torrent|^magnet:/i.test(e.url))
+      .map((e) => ({ 
+        url: e.url, 
+        audio: audioDe(e.lang) || 'Latino', 
+        calidad: calidadTexto(e.quality), 
+        referer: `${BASE}/`,
+        servidor: nombreServidor(e.url)
+      }));
       
-      const url = e.url;
-      if (vistos.has(url)) continue;
-      vistos.add(url);
-
-      const hostName = __nombreSrv(url);
-
-      const audio = audioDe(e.lang) || 'Latino';
-      const calidad = calidadTexto(e.quality);
-
-      tarjetas.push({
-        orden: pesoAudio(audio) * 10000 + pesoCalidad(calidad),
-        t: {
-          name: `${FUENTE} (${hostName})`,
-          title: titulo,
-          url: url,
-          quality: `Calidad: ${calidad || 'Auto'}`,
-          language: audio ? `Audio: ${audio}` : '',
-          provider: FUENTE,
-          headers: { Referer: `${BASE}/` }
-        }
-      });
-    }
-
-    return tarjetas.sort((a, b) => b.orden - a.orden).map((x) => x.t);
-
+    return await armar(lista, encabezado(datos, tipo, temporada, episodio), FUENTE);
   } catch (e) {
     console.log(`[${FUENTE}] ${e.message}`);
     return [];
