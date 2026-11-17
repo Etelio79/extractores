@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.0.7';
+  const VERSION = '1.0.8';
   const CryptoJS = window.CryptoJS;
 
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
@@ -392,6 +392,56 @@
     return { html, galletas: cookies(r), url: r.url || url };
   }
 
+  // ── Candidatos de video (hls4, hls3, hls2, hls + lo que encuentre buscarVideo) ──
+  function dominioBase(url) { return dominio(url).split('.').slice(-2).join('.'); }
+
+  function candidatosVideo(codigo, base) {
+    const lista = [];
+    const links = codigo.match(/links\s*=\s*(\{[^}]+\})/);
+    if (links) {
+      try {
+        const o = JSON.parse(links[1].replace(/'/g, '"'));
+        for (const k of Object.keys(o).filter((x) => /^hls\d?$/.test(x)).sort().reverse()) if (o[k]) lista.push(absoluta(o[k], base));
+      } catch (e) {}
+    }
+    const extra = buscarVideo(codigo, base);
+    if (extra) lista.push(extra);
+    return [...new Set(lista.filter(Boolean))];
+  }
+
+  async function probarMaster(url, cabeceras) {
+    const t = await texto(url, { headers: cabeceras, limite: 4000 });
+    if (!/#EXTM3U/.test(t)) return null;
+    let alto = 0, m;
+    const patron = /RESOLUTION=\d+x(\d+)/gi;
+    while ((m = patron.exec(t))) alto = Math.max(alto, parseInt(m[1], 10));
+    return { calidad: etiquetaAltura(alto) };
+  }
+
+  function primeroValido(promesas) {
+    return new Promise((resolve) => {
+      let pendientes = promesas.length;
+      if (!pendientes) return resolve(null);
+      const fallo = () => { if (--pendientes === 0) resolve(null); };
+      promesas.forEach((p, i) => p.then((v) => (v ? resolve({ i, v }) : fallo()), fallo));
+    });
+  }
+
+  /* Un solo candidato: se usa directo. Varios: se prefieren los del mismo dominio de la página y se
+     elige el primero que responda con un playlist HLS válido; si ninguno responde, el mejor ordenado. */
+  async function elegirVideo(candidatos, base, cabeceras) {
+    if (!candidatos.length) return null;
+    if (candidatos.length === 1) return { url: candidatos[0], calidad: '' };
+    const orden = candidatos
+      .map((c, i) => ({ c, p: (dominioBase(c) === dominioBase(base) ? 0 : 10) + i }))
+      .sort((a, b) => a.p - b.p).map((x) => x.c);
+    if (restante() < 8000) return { url: orden[0], calidad: '' };
+    const ganador = await primeroValido(orden.map((c) => probarMaster(c, cabeceras)));
+    const elegido = ganador ? { url: orden[ganador.i], calidad: ganador.v.calidad } : { url: orden[0], calidad: '' };
+    anotar(`   ↳ ${orden.length} candidatos HLS, ${ganador ? 'elegido el primero que responde' : 'ninguno respondió, se usa el preferido'}: ${rutaCorta(elegido.url)}`);
+    return elegido;
+  }
+
   // ── Reproductor empaquetado (VidHide y similares) ──
   async function resolverEmpaquetado(url, servidor, referer, siguiendo) {
     const propio = `${origen(url)}/`;
@@ -399,11 +449,9 @@
       const html = await texto(url, { headers: { Referer: ref } });
       if (!html) continue;
       const codigo = `${desempacar(html)}\n${html}`;
-      const links = codigo.match(/links\s*=\s*(\{[^}]+\})/);
-      let video = '';
-      if (links) { try { const o = JSON.parse(links[1].replace(/'/g, '"')); video = o.hls4 || o.hls3 || o.hls2 || o.hls || ''; } catch (e) {} }
-      video = absoluta(video || buscarVideo(codigo, url), url);
-      if (video) return enlace(video, servidor, { Referer: propio, Origin: origen(url), 'User-Agent': UA });
+      const cabeceras = { Referer: propio, Origin: origen(url), 'User-Agent': UA };
+      const elegido = await elegirVideo(candidatosVideo(codigo, url), url, cabeceras);
+      if (elegido) return enlace(elegido.url, servidor, cabeceras, elegido.calidad);
       const marco = html.match(/<iframe[^>]+src=["']([^"']+)["']/i);
       if (marco && !siguiendo) return resolverEmpaquetado(absoluta(marco[1], url), servidor, url, true);
     }
