@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.0.6';
+  const VERSION = '1.0.7';
   const CryptoJS = window.CryptoJS;
 
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
@@ -189,7 +189,6 @@
 
   function bytesHex(hex) { const s = []; for (let i = 0; i + 1 < hex.length; i += 2) s.push(parseInt(hex.slice(i, i + 2), 16)); return s; }
   function hexBytes(b) { let t = ''; for (const x of b) t += (x < 16 ? '0' : '') + x.toString(16); return t; }
-  function bytesBase64Url(t) { let b = String(t || '').replace(/-/g, '+').replace(/_/g, '/'); while (b.length % 4) b += '='; return CryptoJS.enc.Base64.parse(b); }
 
   // ── Voe (Altcha + ROT13) ──
   function descifrarVoe(cifrado, ruidos) {
@@ -393,232 +392,7 @@
     return { html, galletas: cookies(r), url: r.url || url };
   }
 
-  // ── Filemoon (Luna ECDSA) ──
-  const resolverLuna = (() => {
-    const CURVA = { p: BigInt('0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff'), n: BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551'), x: BigInt('0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296'), y: BigInt('0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5') };
-    const CERO = BigInt(0), UNO = BigInt(1), DOS = BigInt(2), TRES = BigInt(3), CUATRO = BigInt(4), OCHO = BigInt(8);
-    let visorLuna = '', dispositivoLuna = '', llaveLuna = null, paseLuna = null, pendienteLuna = null;
-    const UA_LUNA = 'Mozilla/5.0 (Linux; Android 16; Pixel 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36';
-    const NAVEGADOR_LUNA = { 'User-Agent': UA_LUNA, 'Accept-Language': 'es-ES,es;q=0.9', 'sec-ch-ua': '"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"', 'sec-ch-ua-mobile': '?1', 'sec-ch-ua-platform': '"Android"', 'Sec-Fetch-Dest': 'empty', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Site': 'same-origin' };
-
-    function resto(a, m) { const r = a % m; return r < CERO ? r + m : r; }
-    function potencia(base, exponente, m) { let r = UNO, b = resto(base, m), e = exponente; while (e > CERO) { if (e & UNO) r = (r * b) % m; b = (b * b) % m; e >>= UNO; } return r; }
-    function inversoMod(a, m) { return potencia(a, m - DOS, m); }
-    function doblar(q) {
-      const { p } = CURVA; if (!q || q[1] === CERO) return null;
-      const [x, y, z] = q, delta = (z * z) % p, gamma = (y * y) % p, beta = (x * gamma) % p;
-      const alfa = resto(TRES * (x - delta) * (x + delta), p), x3 = resto(alfa * alfa - OCHO * beta, p);
-      const z3 = resto((y + z) * (y + z) - gamma - delta, p), y3 = resto(alfa * (CUATRO * beta - x3) - OCHO * gamma * gamma, p);
-      return [x3, y3, z3];
-    }
-    function sumar(a, b) {
-      const { p } = CURVA; if (!a) return b; if (!b) return a;
-      const z1 = (a[2] * a[2]) % p, z2 = (b[2] * b[2]) % p, u1 = (a[0] * z2) % p, u2 = (b[0] * z1) % p;
-      const s1 = (((a[1] * z2) % p) * b[2]) % p, s2 = (((b[1] * z1) % p) * a[2]) % p;
-      if (u1 === u2) return s1 === s2 ? doblar(a) : null;
-      const h = resto(u2 - u1, p), r = resto(s2 - s1, p), h2 = (h * h) % p, h3 = (h2 * h) % p;
-      const x3 = resto(r * r - h3 - DOS * u1 * h2, p), y3 = resto(r * (u1 * h2 - x3) - s1 * h3, p), z3 = (((h * a[2]) % p) * b[2]) % p;
-      return [x3, y3, z3];
-    }
-    function multiplicar(k) {
-      let r = null, q = [CURVA.x, CURVA.y, UNO], e = k;
-      while (e > CERO) { if (e & UNO) r = sumar(r, q); q = doblar(q); e >>= UNO; }
-      if (!r) return null;
-      const zi = inversoMod(r[2], CURVA.p), zi2 = (zi * zi) % CURVA.p;
-      return [(r[0] * zi2) % CURVA.p, (((r[1] * zi2) % CURVA.p) * zi) % CURVA.p];
-    }
-    function hexAzar(bytes) { let t = ''; for (let i = 0; i < bytes; i++) t += Math.floor(Math.random() * 256).toString(16).padStart(2, '0'); return t; }
-    function escalarAzar() { return resto(BigInt(`0x${hexAzar(40)}`), CURVA.n - UNO) + UNO; }
-    function hex32(v) { return v.toString(16).padStart(64, '0'); }
-    function base64Url(palabras) { return palabras.toString(CryptoJS.enc.Base64).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
-    function hexUrl(hex) { return base64Url(CryptoJS.enc.Hex.parse(hex)); }
-
-    function firmarLuna(texto) {
-      if (!llaveLuna) { const nueva = escalarAzar(); llaveLuna = { privada: nueva, publica: multiplicar(nueva) }; }
-      const { privada, publica } = llaveLuna;
-      const e = BigInt(`0x${CryptoJS.SHA256(CryptoJS.enc.Utf8.parse(texto)).toString(CryptoJS.enc.Hex)}`);
-      for (let intento = 0; intento < 8; intento++) {
-        const k = escalarAzar(), punto = multiplicar(k), r = resto(punto[0], CURVA.n);
-        if (r === CERO) continue;
-        const s = resto(inversoMod(k, CURVA.n) * (e + r * privada), CURVA.n);
-        if (s === CERO) continue;
-        return { firma: hexUrl(hex32(r) + hex32(s)), clave: { crv: 'P-256', ext: true, key_ops: ['verify'], kty: 'EC', x: hexUrl(hex32(publica[0])), y: hexUrl(hex32(publica[1])) } };
-      }
-      return null;
-    }
-    function abrirLuna(datos) {
-      const partes = (datos.key_parts || []).map(bytesBase64Url), cortas = partes.filter((x) => x.sigBytes === 16);
-      if (cortas.length < 2 || !datos.iv || !datos.payload) return '';
-      const clave = cortas[0].clone().concat(cortas[1]), vector = bytesBase64Url(datos.iv);
-      if (vector.sigBytes !== 12) return '';
-      const todo = bytesBase64Url(datos.payload);
-      try {
-        if (CryptoJS.mode.CTR) {
-          const contador = vector.clone().concat(CryptoJS.lib.WordArray.create([2], 4));
-          const cifrado = CryptoJS.lib.WordArray.create(todo.words.slice(0, Math.ceil((todo.sigBytes - 16) / 4)), todo.sigBytes - 16);
-          return CryptoJS.AES.decrypt({ ciphertext: cifrado }, clave, { iv: contador, mode: CryptoJS.mode.CTR, padding: CryptoJS.pad.NoPadding }).toString(CryptoJS.enc.Utf8);
-        }
-        if (CryptoJS.mode.GCM) return CryptoJS.AES.decrypt({ ciphertext: todo }, clave, { iv: vector, mode: CryptoJS.mode.GCM, padding: CryptoJS.pad.NoPadding }).toString(CryptoJS.enc.Utf8);
-      } catch (e) { return ''; }
-      return '';
-    }
-
-    const TABLA_LUNA = new Int32Array(512);
-    function hashLuna(texto) {
-      let a = 1779033703 | 0, b = 3144134277 | 0, c = 1013904242 | 0, d = 2773480762 | 0, x;
-      for (let i = 0; i < texto.length; i++) {
-        a = (a + (texto.charCodeAt(i) & 255)) | 0; a = (a << 7) | (a >>> 25);
-        a = (a + b) | 0; x = d ^ a; d = (x << 16) | (x >>> 16);
-        c = (c + d) | 0; x = b ^ c; b = (x << 12) | (x >>> 20);
-        a = (a + b) | 0; x = d ^ a; d = (x << 8) | (x >>> 24);
-        c = (c + d) | 0; x = b ^ c; b = (x << 7) | (x >>> 25);
-      }
-      for (let i = 0; i < 8; i++) {
-        a = (a + b) | 0; x = d ^ a; d = (x << 16) | (x >>> 16);
-        c = (c + d) | 0; x = b ^ c; b = (x << 12) | (x >>> 20);
-        a = (a + b) | 0; x = d ^ a; d = (x << 8) | (x >>> 24);
-        c = (c + d) | 0; x = b ^ c; b = (x << 7) | (x >>> 25);
-      }
-      const r = TABLA_LUNA;
-      for (let i = 0; i < 512; i++) {
-        a = (a + b) | 0; x = d ^ a; d = (x << 16) | (x >>> 16);
-        c = (c + d) | 0; x = b ^ c; b = (x << 12) | (x >>> 20);
-        a = (a + b) | 0; x = d ^ a; d = (x << 8) | (x >>> 24);
-        c = (c + d) | 0; x = b ^ c; b = (x << 7) | (x >>> 25);
-        r[i] = a ^ c;
-      }
-      for (let vuelta = 0; vuelta < 2; vuelta++) {
-        for (let s = 0; s < 512; s++) {
-          let v = (r[s] + r[r[s] & 511]) | 0; v = (v << 13) | (v >>> 19);
-          v ^= Math.imul(r[(s + 1) & 511], -1640531535); r[s] = v; a ^= v;
-          a = (a + b) | 0; x = d ^ a; d = (x << 16) | (x >>> 16);
-          c = (c + d) | 0; x = b ^ c; b = (x << 12) | (x >>> 20);
-          a = (a + b) | 0; x = d ^ a; d = (x << 8) | (x >>> 24);
-          c = (c + d) | 0; x = b ^ c; b = (x << 7) | (x >>> 25);
-        }
-      }
-      const salida = [];
-      for (let i = 0; i < 8; i++) {
-        a = (a + b) | 0; x = d ^ a; d = (x << 16) | (x >>> 16);
-        c = (c + d) | 0; x = b ^ c; b = (x << 12) | (x >>> 20);
-        a = (a + b) | 0; x = d ^ a; d = (x << 8) | (x >>> 24);
-        c = (c + d) | 0; x = b ^ c; b = (x << 7) | (x >>> 25);
-        let s = a; const base = i * 64;
-        for (let k = 0; k < 64; k++) { const v = r[base + k]; s = (s + v) | 0; s = (s << 5) | (s >>> 27); s ^= Math.imul(v, -2048144777); }
-        salida.push((s ^ c) >>> 0);
-      }
-      return salida;
-    }
-    function cerosLuna(p) { let n = 0; for (let i = 0; i < p.length; i++) { if (p[i] === 0) { n += 32; continue; } return n + Math.clz32(p[i]); } return n; }
-    async function trabajoLuna(tarea, tope) {
-      if (!(tarea.dificultad > 0)) return '0';
-      const prefijo = `${tarea.nonce}:`, comienzo = Date.now();
-      for (let n = tarea.siguiente; ; n++) {
-        if (cerosLuna(hashLuna(prefijo + n)) >= tarea.dificultad) return String(n);
-        if ((n & 1023) === 1023) { tarea.siguiente = n + 1; if (Date.now() - comienzo > tope) return null; await esperar(0); }
-      }
-    }
-    async function captchaLuna(baseMarco, codigo, huella, cabeceras, pasos) {
-      let tarea = pendienteLuna && pendienteLuna.base === baseMarco && Date.now() < pendienteLuna.vence ? pendienteLuna : null;
-      if (tarea) { pasos.push(`retomando prueba desde ${tarea.siguiente}`); }
-      else {
-        const reto = await enviarLuna(`${baseMarco}/api/videos/${codigo}/embed/captcha`, { fingerprint: huella }, cabeceras, pasos);
-        if (!reto || !reto.pow_token) return '';
-        tarea = { base: baseMarco, codigo, token: reto.pow_token, nonce: String(reto.pow_nonce || ''), dificultad: Number(reto.pow_difficulty) || 0, siguiente: 0, vence: Date.now() + (Number(reto.expires_in) || 25) * 1000 - 4000 };
-        pendienteLuna = tarea;
-      }
-      const tope = Math.max(3000, Math.min(tarea.vence - Date.now(), restante() - 8000)), comienzo = Date.now(), desde = tarea.siguiente;
-      const solucion = await trabajoLuna(tarea, tope);
-      pasos.push(`prueba ${tarea.dificultad} ${solucion === null ? 'sin resolver' : 'resuelta'}`);
-      if (solucion === null) return '';
-      pendienteLuna = null;
-      const r = await enviarLuna(`${baseMarco}/api/videos/${tarea.codigo}/embed/captcha/verify`, { pow_token: tarea.token, solution: solucion, fingerprint: huella }, cabeceras, pasos);
-      if (!r || r.status !== 'ok' || !r.token) return '';
-      paseLuna = { token: r.token, vence: Date.now() + Math.max(60, (Number(r.expires_in) || 600) - 30) * 1000 };
-      return r.token;
-    }
-    function paseCompartido(baseMarco, codigo, huella, cabeceras, pasos) {
-      if (paseLuna && paseLuna.token && Date.now() < paseLuna.vence) return Promise.resolve(paseLuna.token);
-      if (paseLuna && paseLuna.promesa) { pasos.push('esperando la prueba de otro servidor'); return paseLuna.promesa; }
-      const promesa = captchaLuna(baseMarco, codigo, huella, cabeceras, pasos).catch(() => '');
-      paseLuna = { promesa }; promesa.then((t) => { if (!t && paseLuna && paseLuna.promesa === promesa) paseLuna = null; });
-      return promesa;
-    }
-    async function enviarLuna(url, cuerpo, cabeceras, pasos) {
-      const r = await fetch(url, { method: 'POST', headers: Object.assign({ Accept: '*/*' }, NAVEGADOR_LUNA, cuerpo === '' ? {} : { 'Content-Type': 'application/json' }, cabeceras), body: cuerpo === '' ? '' : JSON.stringify(cuerpo) });
-      const paso = url.replace(/^.*\/api\/videos\//, '').replace(/^[\w-]+\/embed\//, '').replace(/^access\//, '');
-      if (!r || !r.status) { pasos.push(`${paso} sin respuesta`); return null; }
-      const texto = await r.text();
-      if (!r.ok) { pasos.push(`${paso} ${r.status}`); return null; }
-      pasos.push(`${paso} ok`); try { return JSON.parse(texto); } catch (e) { return null; }
-    }
-
-    return async function resolverLuna(url) {
-      const m = url.match(/\/(?:e|d|download)\/([a-zA-Z0-9]+)/);
-      if (!m) return [];
-      const pasos = [], base = origen(url), embed = `${base}/e/${m[1]}`;
-      const detalle = await (await fetch(`${base}/api/videos/${m[1]}/embed/details`, { headers: Object.assign({}, NAVEGADOR_LUNA, { Accept: '*/*', Referer: embed, 'X-Embed-Parent': embed }) })).json().catch(() => null);
-      const marco = detalle && detalle.embed_frame_url;
-      if (!marco) return [];
-      const baseMarco = origen(marco), cabeceras = { Referer: marco, Origin: baseMarco };
-      let acceso = null;
-      for (let vuelta = 0; vuelta < 3; vuelta++) {
-        const reto = await enviarLuna(`${baseMarco}/api/videos/access/challenge`, '', cabeceras, pasos);
-        if (!reto || !reto.nonce || !reto.challenge_id) break;
-        const prueba = firmarLuna(reto.nonce);
-        if (!prueba) break;
-        const conocido = visorLuna && dispositivoLuna;
-        const respuesta = await enviarLuna(`${baseMarco}/api/videos/access/attest`, {
-          viewer_id: conocido ? visorLuna : '', device_id: conocido ? dispositivoLuna : '', challenge_id: reto.challenge_id, nonce: reto.nonce,
-          signature: prueba.firma, public_key: prueba.clave, client: { user_agent: UA_LUNA, platform: 'Android' },
-          storage: conocido ? { local_storage: visorLuna, indexed_db: `${visorLuna}:${dispositivoLuna}`, cache_storage: `${visorLuna}:${dispositivoLuna}` } : {},
-          attributes: { entropy: 'high' }
-        }, cabeceras, pasos);
-        if (!respuesta || !respuesta.token) break;
-        acceso = respuesta;
-        if (respuesta.viewer_id) visorLuna = respuesta.viewer_id;
-        if (respuesta.device_id) dispositivoLuna = respuesta.device_id;
-        if (conocido && Number(respuesta.confidence) >= 0.85) break;
-        if (vuelta > 0 && !conocido) break;
-      }
-      if (!acceso) return [];
-      const huella = { token: acceso.token, viewer_id: acceso.viewer_id || visorLuna, device_id: acceso.device_id || dispositivoLuna, confidence: acceso.confidence };
-      const cabecerasVideo = Object.assign({ 'X-Embed-Parent': embed }, cabeceras);
-      const guardado = paseLuna && paseLuna.token && Date.now() < paseLuna.vence ? paseLuna.token : '';
-      let play = await enviarLuna(`${baseMarco}/api/videos/${m[1]}/embed/playback`, { fingerprint: huella }, guardado ? Object.assign({ 'X-Captcha-Token': guardado }, cabecerasVideo) : cabecerasVideo, pasos);
-      if ((!play || !play.playback) && guardado) paseLuna = null;
-      if (!play || !play.playback) {
-        const pase = await paseCompartido(baseMarco, m[1], huella, cabecerasVideo, pasos);
-        if (pase) play = await enviarLuna(`${baseMarco}/api/videos/${m[1]}/embed/playback`, { fingerprint: huella }, Object.assign({ 'X-Captcha-Token': pase }, cabecerasVideo), pasos);
-      }
-      if (!play || !play.playback) return [];
-      const claro = abrirLuna(play.playback);
-      try {
-        const datos = JSON.parse(claro.replace(/^﻿/, ''));
-        const fuentes = [].concat(datos.sources || datos.source || []);
-        const fuente = fuentes.find((f) => f && /m3u8/.test(f.url || '')) || fuentes[0];
-        const destino = typeof fuente === 'string' ? fuente : fuente && fuente.url;
-        if (destino) return enlace(destino, 'Filemoon', { Referer: `${baseMarco}/`, Origin: baseMarco, 'User-Agent': UA_LUNA }, calidadTexto(fuente && fuente.label));
-      } catch (e) {}
-      return [];
-    };
-  })();
-
-  // ── Doodstream ──
-  async function resolverDood(url, referer) {
-    const embed = url.replace(/\/(d|f|download)\//, '/e/');
-    const html = await texto(embed, { headers: { Referer: referer || embed } });
-    const m = html.match(/\/pass_md5\/[\w-]+\/([\w-]+)/);
-    if (!m) return [];
-    const base = origen(embed);
-    const prefijo = await texto(base + m[0], { headers: { Referer: embed } });
-    if (!/^https?:/.test(prefijo)) return [];
-    let azar = ''; const letras = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    for (let i = 0; i < 10; i++) azar += letras[Math.floor(Math.random() * letras.length)];
-    return enlace(`${prefijo}${azar}?token=${m[1]}&expiry=${Date.now()}`, 'Doodstream', { Referer: `${base}/`, 'User-Agent': UA });
-  }
-
-  // ── StreamWish / Empaquetado ──
+  // ── Reproductor empaquetado (VidHide y similares) ──
   async function resolverEmpaquetado(url, servidor, referer, siguiendo) {
     const propio = `${origen(url)}/`;
     for (const ref of [...new Set([referer || propio, propio])]) {
@@ -636,12 +410,14 @@
     return [];
   }
 
-  async function resolverStreamwish(url, referer) {
-    const propio = await resolverEmpaquetado(url, 'StreamWish', referer);
-    if (propio.length) return propio;
+  // ── VidHide / FileLions (reproductor empaquetado; prueba espejos si el dominio no conecta) ──
+  async function resolverVidhide(url, referer) {
     const id = url.replace(/[?#].*$/, '').split('/').filter(Boolean).pop().replace(/\.html$/, '');
-    const espejos = [`https://hglink.to/e/${id}`, `https://streamwish.to/e/${id}`, `https://vibuxer.com/e/${id}`].filter((e) => dominio(e) !== dominio(url));
-    const listas = await Promise.all(espejos.map((e) => resolverEmpaquetado(e, 'StreamWish', referer, true)));
+    const propio = await resolverEmpaquetado(url, 'VidHide', referer);
+    if (propio.length) return propio;
+    const espejos = ['vidhidepro.com', 'vidhidevip.com', 'vidhidepre.com']
+      .map((d) => `https://${d}/v/${id}`).filter((e) => dominio(e) !== dominio(url));
+    const listas = await Promise.all(espejos.map((e) => resolverEmpaquetado(e, 'VidHide', referer, true)));
     return listas.find((l) => l.length) || [];
   }
 
@@ -762,9 +538,7 @@
   // ── Lista de Servidores ──
   const SERVIDORES = [
     [/voe\.sx|voe-unblock|voeunbl|v-o-e|voe\./i, 'Voe', (u, r) => resolverVoe(u, r)],
-    [/filemoon|moonplayer|kerapoxy|byse|bysezoxexe|bysezejataos|byse[a-z]*|f16px|filemooon|1azayf|smdfs40r/i, 'Filemoon', (u) => resolverLuna(u)],
-    [/streamwish|swdyu|wishembed|playerwish|strwish|swhoi|wishfast|sfastwish|hlswish|embedwish|awish|dwish|streamhg|hglink|habetar|mwish|kswplayer|swiftplayers|hanerix|cdnwish|flaswish|obeywish|davioad|jodwish|ghbrisk|dhcplay|iplayerhls|cybervynx|dumbalag|wishonly|streamwishplayer|asnwish|nekowish|neko-stream|multimovies|streamhls|vibuxer|premilkyway/i, 'StreamWish', (u, r) => resolverStreamwish(u, r)],
-    [/dood|d0000d|d000d|ds2play|ds2video|dooood|doods|do0od|vide0|vidply|all3do|dood\.|d-s\.io|dsvplay|myvidplay|playmogo|do7go/i, 'Doodstream', (u, r) => resolverDood(u, r)],
+    [/vidhide|filelions|ryderjet|dintezuvio|mivalyo|dhtpre|peytonepre|smoothpre|louishide|lylxan|movearnpre|kinoger|alions|azipcdn|nikaplayer|fviplions|niikaplayerr|callistanise|dinisglows|dingtezuni|minochinos|taylorplayer/i, 'VidHide', (u, r) => resolverVidhide(u, r)],
     [/vimeos/i, 'Vimeos', (u, r) => resolverVimeos(u, r)],
     [/streamsilk|savefiles|vembed|vidguard|listeamed|bembed|embedseek|tplayer|turbovid|vidsonic|vidnest|dropcdn|barmonrey/i, '', (u, r) => resolverGenerico(u, nombreServidor(u), r, 1)]
   ];
