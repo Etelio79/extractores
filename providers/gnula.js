@@ -147,7 +147,8 @@ function audioDe(t) { const s = normalizar(t); if (!s) return ''; if (/latino|\b
 function limitar(buscador, respaldo) { return (...argumentos) => { inicio = Date.now(); caidos.clear(); registro = []; const trabajo = conLimite(Promise.resolve().then(() => buscador(...argumentos)), CIERRE, null); return respaldo ? trabajo.then((salida) => (salida && salida.length ? salida : respaldo(salida === null))) : trabajo.then((salida) => salida || []); }; }
 
 /* ══════════════════ BUSCADOR GNULA ══════════════════ */
-const DESCARTAR_JUGADORES = /fembed|streamsb|plustream|waaw|netu|hqq|jetload|1fichier|uptobox|powvideo|streamplay/i;
+/* ── Lista blanca: solo se devuelven embeds de hosts que ya reproducen en la app ── */
+const HOSTS_OK = /voe|vidhide|vidhidepro|filelions|dhtpre|minochinos|ryderjet|vimeos|vimeus|morencius|filemoon|moonplayer|byse|kerapoxy|f16px|vidara|mxzhxco8dft/i;
 
 function propsSiguiente(html) {
   const m = String(html || '').match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
@@ -252,11 +253,11 @@ async function metodoSiguiente(sitio, datos, tipo, temporada, episodio) {
   if (!pagina) return [];
   if (tipo === 'tv') pagina = episodioSiguiente(sitio, await texto(pagina, { headers: { Referer: `${sitio.base}/` } }), pagina, temporada, episodio);
   const html = await texto(pagina, { headers: { Referer: `${sitio.base}/` } });
-  const jugadores = jugadoresSiguiente(html).filter((j) => !DESCARTAR_JUGADORES.test(`${j.servidor} ${j.url}`));
+  const jugadores = jugadoresSiguiente(html);
   anotar(`${rutaCorta(pagina)}: ${jugadores.length} reproductores`);
   const lista = await Promise.all(jugadores.map(async (j) => {
     const url = await destinoJugador(j.url, pagina).catch(() => '');
-    return url && !DESCARTAR_JUGADORES.test(url) ? { url, audio: audioJugador(j.idioma), calidad: calidadTexto(j.calidad), referer: `${sitio.base}/` } : null;
+    return url ? { url, audio: audioJugador(j.idioma), calidad: calidadTexto(j.calidad), referer: `${sitio.base}/` } : null;
   }));
   const vistos = new Set();
   return lista.filter((x) => x && !vistos.has(x.url) && vistos.add(x.url));
@@ -273,7 +274,6 @@ async function metodoEspejos(sitios, datos, tipo, temporada, episodio) {
 const FUENTE = 'Gnula';
 const GNULA_LIFE = [{ base: 'https://gnula.life', peli: /\/movies\//, serie: /\/series\//, episodio: (b, nombre, t, e) => `${b}/series/${nombre}/seasons/${t}/episodes/${e}` }];
 const GNULA_ONE = 'https://www2.gnula.one';
-const EVITAR = /powvideo|streamplay|fembed|1fichier|uptobox|filemirage|filepv|multiup|formatearwindows|waaw|netu|hqq|player\.cuevana\.ac/i;
 
 function idiomaGnula(url) {
   const m = String(url || '').match(/#(?:lang|idioma)=([^&#]+)/i);
@@ -320,7 +320,7 @@ async function metodoOne(datos) {
     crudos.push(marco);
   }
   const vistos = new Set();
-  return crudos.filter((u) => /^https?:\/\//.test(u) && !EVITAR.test(u)).map((u) => ({
+  return crudos.filter((u) => /^https?:\/\//.test(u)).map((u) => ({
     url: u.replace(/#.*$/, ''),
     audio: idiomaGnula(u) || 'Latino',
     referer: `${GNULA_ONE}/`
@@ -338,7 +338,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       metodoEspejos(GNULA_LIFE, datos, tipo, temporada, episodio),
       (tipo === 'movie' ? metodoOne(datos) : [])
     ]);
-    const lista = [].concat(...listas);
+    const lista = [].concat(...listas).filter((e) => HOSTS_OK.test(e.url));
     return await armar(lista, encabezado(datos, tipo, temporada, episodio), FUENTE);
   } catch (e) {
     console.log(`[${FUENTE}] ${e.message}`);

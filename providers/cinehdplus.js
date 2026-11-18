@@ -151,7 +151,8 @@ function limitar(buscador, respaldo) { return (...argumentos) => { inicio = Date
 const FUENTE = 'CineHdPlus';
 const BASE = 'https://cinehdplus.org';
 const API = 'https://api.cinehdplus.org';
-const EVITAR = /waaw|netu|hqq/i;
+/* ── Lista blanca: solo se devuelven embeds de hosts que ya reproducen en la app ── */
+const HOSTS_OK = /voe|vidhide|vidhidepro|filelions|dhtpre|minochinos|ryderjet|vimeos|vimeus|morencius|filemoon|moonplayer|byse|kerapoxy|f16px|vidara|mxzhxco8dft/i;
 
 function esFicha(url, tipo) { return tipo === 'movie' ? /\/pelicula/.test(url) : /\/series?-tv-|\/series\/[^/]+/.test(url); }
 
@@ -251,7 +252,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       if (!h || vistos.has(h)) return;
       vistos.add(h);
       const audio = audioDe(etiqueta) || audioCodigo(etiqueta) || 'Latino';
-      tareas.push(desenredar(h).then((url) => (url && /^https?:/.test(url) && !EVITAR.test(url) ? { url, audio, referer: `${BASE}/` } : null)).catch(() => null));
+      tareas.push(desenredar(h).then((url) => (url && /^https?:/.test(url) ? { url, audio, referer: `${BASE}/` } : null)).catch(() => null));
     };
     const botones = /<button\b[^>]*>/gi;
     let b;
@@ -274,6 +275,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       if (!e.url || vistosFinal.has(e.url)) continue;
       vistosFinal.add(e.url);
       const hostName = (() => { try { const h = new URL(e.url).hostname.replace(/^www\./, '').toLowerCase(); const p = h.split('.'); return p.length > 1 ? p[p.length - 2].charAt(0).toUpperCase() + p[p.length - 2].slice(1) : h; } catch(_) { return 'Servidor'; } })();
+      if (!HOSTS_OK.test(`${hostName} ${e.url}`)) continue;
       tarjetas.push({
         name: `${FUENTE} (${hostName})`,
         title: encabezado(datos, tipo, temporada, episodio),

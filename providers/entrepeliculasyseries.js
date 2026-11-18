@@ -236,8 +236,8 @@ function __nombreSrv(url) {
 const FUENTE = 'EntrePeliculasySeries';
 const BASE = 'https://entrepeliculasyseries.nz';
 
-/* ── Filtros de hosts ── */
-const HOSTS_BLOQUEADOS = /^(?:megaup\.net|1fichier\.com|mediafire\.com|rapidgator\.net|katfile\.com|nitroflare\.com|ddownload\.com|turbobit\.net|uploaded\.net|filefactory\.com|acortalink\.me|acortalink\.net|adf\.ly|adfly\.com|linkvertise\.com|ouo\.io|shrinkme\.io|shorte\.st|clk\.sh)$/i;
+/* ── Lista blanca: solo se devuelven embeds de hosts que ya reproducen en la app ── */
+const HOSTS_OK = /voe|vidhide|vidhidepro|filelions|dhtpre|minochinos|ryderjet|vimeos|vimeus|morencius|filemoon|moonplayer|byse|kerapoxy|f16px|vidara|mxzhxco8dft/i;
 
 function _limpia(s) {
   return String(s || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
@@ -249,7 +249,7 @@ function esValido(url, urlOriginal) {
   if (urlOriginal && _limpia(url) === _limpia(urlOriginal)) return false;
   try {
     const h = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
-    if (HOSTS_BLOQUEADOS.test(h)) return false;
+    if (!HOSTS_OK.test(`${__nombreSrv(url)} ${h}`)) return false;
   } catch (_) { return false; }
   return true;
 }

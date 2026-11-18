@@ -191,6 +191,9 @@ function nombreServidor(url) {
   return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Directo';
 }
 
+/* ── Lista blanca: solo se devuelven embeds de hosts que ya reproducen en la app ── */
+const HOSTS_OK = /voe|vidhide|vidhidepro|filelions|dhtpre|minochinos|ryderjet|vimeos|vimeus|morencius|filemoon|moonplayer|byse|kerapoxy|f16px|vidara|mxzhxco8dft/i;
+
 /* ── Armar tarjetas SIN resolver ── */
 async function armar(lista, titulo, fuente) {
   const vistos = new Set();
@@ -284,7 +287,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     
     // Extraer los embeds de la respuesta de la API
     const lista = ((r && r.data && r.data.embeds) || [])
-      .filter((e) => e.url && /^https?:/.test(e.url) && e.server !== 'Torrent' && !/\.torrent|^magnet:/i.test(e.url))
+      .filter((e) => e.url && /^https?:/.test(e.url) && HOSTS_OK.test(`${nombreServidor(e.url)} ${e.url}`))
       .map((e) => ({ 
         url: e.url, 
         audio: audioDe(e.lang) || 'Latino', 

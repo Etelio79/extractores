@@ -195,12 +195,16 @@ function nombreServidor(url) {
   return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Directo';
 }
 
+/* ── Lista blanca: solo se devuelven embeds de hosts que ya reproducen en la app ── */
+const HOSTS_OK = /voe|vidhide|vidhidepro|filelions|dhtpre|minochinos|ryderjet|vimeos|vimeus|morencius|filemoon|moonplayer|byse|kerapoxy|f16px|vidara|mxzhxco8dft/i;
+
 async function armar(lista, titulo, fuente) {
   const vistos = new Set();
   const tarjetas = [];
   for (const item of lista) {
     if (!item.url || vistos.has(item.url)) continue;
     vistos.add(item.url);
+    if (!HOSTS_OK.test(`${item.servidor || ''} ${item.url}`)) continue;
     tarjetas.push({
       orden: pesoAudio(item.audio || '') * 10000 + pesoCalidad(item.calidad || ''),
       t: {
@@ -289,7 +293,7 @@ async function metodoWp(datos, tipo, temporada, episodio) {
     if (!id) return [];
   }
   const r = await json(`${API_WP}/player?postId=${id}`);
-  return ((r && r.data && r.data.embeds) || []).filter((e) => e.url && !/la\.movie/.test(e.url)).map((e) => ({ url: e.url, audio: audioDe(e.lang) || 'Latino', referer: 'https://hackstore.mx/', servidor: nombreServidor(e.url) }));
+  return ((r && r.data && r.data.embeds) || []).filter((e) => e.url).map((e) => ({ url: e.url, audio: audioDe(e.lang) || 'Latino', referer: 'https://hackstore.mx/', servidor: nombreServidor(e.url) }));
 }
 
 async function getStreams(tmdbId, mediaType, season, episode) {

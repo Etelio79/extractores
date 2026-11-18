@@ -268,6 +268,7 @@ async function flujoAnime(sitio, tmdbId, mediaType, season, episode) {
     
     const hostName = (() => { try { const h = new URL(e.url).hostname.replace(/^www\./, '').toLowerCase(); const p = h.split('.'); return p.length > 1 ? p[p.length - 2].charAt(0).toUpperCase() + p[p.length - 2].slice(1) : h; } catch(_) { return 'Servidor'; } })();
     
+    if (!HOSTS_OK.test(`${hostName} ${e.url}`)) continue;
     tarjetas.push({
       name: `${sitio.fuente} (${hostName})`,
       title: titulo,
@@ -285,7 +286,8 @@ async function flujoAnime(sitio, tmdbId, mediaType, season, episode) {
 const FUENTE = 'Henaojara';
 const NUEVO = 'https://ww1.henaojara.net';
 const CLASICO = 'https://henaojara.com';
-const EVITAR = /mega\.nz|mega\.co|hqq|netuplayer|krakenfiles|hj\.henaojara\.com|streamhj\.top/i;
+/* ── Lista blanca: solo se devuelven embeds de hosts que ya reproducen en la app ── */
+const HOSTS_OK = /voe|vidhide|vidhidepro|filelions|dhtpre|minochinos|ryderjet|vimeos|vimeus|morencius|filemoon|moonplayer|byse|kerapoxy|f16px|vidara|mxzhxco8dft/i;
 
 async function buscarNuevo(consulta) {
   const html = await texto(`${NUEVO}/animes?buscar=${encodeURIComponent(consulta).replace(/%20/g, '+')}`, { headers: { Referer: `${NUEVO}/` } });
@@ -371,7 +373,7 @@ async function enlacesNuevo(pagina) {
       for (const u of JSON.parse(entidades(descargas))) urls.push(u);
     } catch (e) {}
   }
-  return urls.filter((u) => /^https?:/.test(u) && !EVITAR.test(u)).map((url) => ({ url, referer: `${NUEVO}/` }));
+  return urls.filter((u) => /^https?:/.test(u)).map((url) => ({ url, referer: `${NUEVO}/` }));
 }
 
 async function enlacesClasico(pagina) {
@@ -386,7 +388,7 @@ async function enlacesClasico(pagina) {
     const url = absoluta(marco, pagina);
     tareas.push((async () => {
       const real = /henaojara\./i.test(dominio(url)) ? await marcoReal(url, pagina) : url;
-      return real && !EVITAR.test(real) && !/multiplayer/i.test(real) ? { url: real, referer: `${CLASICO}/` } : null;
+      return real ? { url: real, referer: `${CLASICO}/` } : null;
     })().catch(() => null));
   }
   return (await Promise.all(tareas)).filter(Boolean);

@@ -211,6 +211,8 @@ const __SRV = [
   [/dood|d000d|ds2play/i, 'DoodStream'], [/mixdrop/i, 'MixDrop'], [/streamtape/i, 'StreamTape'],
   [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru']
 ];
+// Lista blanca: solo se devuelven embeds de hosts que ya reproducen en la app
+const HOSTS_OK = /voe|vidhide|vidhidepro|filelions|dhtpre|minochinos|ryderjet|vimeos|vimeus|morencius|filemoon|moonplayer|byse|kerapoxy|f16px|vidara|mxzhxco8dft/i;
 function __nombreSrv(url) {
   let h = '';
   try { h = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch (_) { return 'Servidor'; }
@@ -306,10 +308,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
     for (const e of (d.embeds || [])) {
       const url = String(e.url || '').replace(/\\\//g, '/');
-      if (!/^https?:/.test(url) || vistos.has(url) || /sbcom|lvturbo|vanfem|fembed|1fichier|fireload/i.test(url)) continue;
+      if (!/^https?:/.test(url) || vistos.has(url)) continue;
       vistos.add(url);
 
       const hostName = __nombreSrv(url);
+      if (!HOSTS_OK.test(hostName + ' ' + url)) continue;
 
       const audio = audioDe(e.lang) || 'Latino';
       const calidad = calidadTexto(e.quality);

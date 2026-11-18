@@ -148,6 +148,9 @@ function audioDe(t) { const s = normalizar(t); if (!s) return ''; if (/latino|\b
 
 function limitar(buscador, respaldo) { return (...argumentos) => { inicio = Date.now(); caidos.clear(); registro = []; const trabajo = conLimite(Promise.resolve().then(() => buscador(...argumentos)), CIERRE, null); return respaldo ? trabajo.then((salida) => (salida && salida.length ? salida : respaldo(salida === null))) : trabajo.then((salida) => salida || []); }; }
 
+/* ── Lista blanca: solo se devuelven embeds de hosts que ya reproducen en la app ── */
+const HOSTS_OK = /voe|vidhide|vidhidepro|filelions|dhtpre|minochinos|ryderjet|vimeos|vimeus|morencius|filemoon|moonplayer|byse|kerapoxy|f16px|vidara|mxzhxco8dft/i;
+
 /* ══════════════════ BUSCADOR CINECALIDAD ══════════════════ */
 const FUENTE = 'CineCalidad';
 const BASES = ['https://www.cinecalidad.vg', 'https://www.cinecalidad.ec'];
@@ -235,7 +238,7 @@ async function enlacesPagina(html, base, pagina) {
   const pu = /<a\b[^>]*data-url=["']([A-Za-z0-9+/=]{20,})["'][^>]*>([\s\S]*?)<\/a>/gi;
   while ((m = pu.exec(html))) {
     const destino = atobSeguro(m[1]);
-    if (/^https?:/.test(destino) && !/mediafire/i.test(destino) && !TRAILER.test(destino)) crudos.push({ url: destino, audio: audioDe(limpiarHtml(m[2])) || 'Latino' });
+    if (/^https?:/.test(destino) && !TRAILER.test(destino)) crudos.push({ url: destino, audio: audioDe(limpiarHtml(m[2])) || 'Latino' });
   }
   const ps = /data-src=["']([A-Za-z0-9+/=]{20,})["']/g;
   while ((m = ps.exec(html))) {
@@ -297,6 +300,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
           if (!e.url || vistos.has(e.url)) continue;
           vistos.add(e.url);
           const hostName = (() => { try { const h = new URL(e.url).hostname.replace(/^www\./, '').toLowerCase(); const p = h.split('.'); return p.length > 1 ? p[p.length - 2].charAt(0).toUpperCase() + p[p.length - 2].slice(1) : h; } catch(_) { return 'Servidor'; } })();
+          if (!HOSTS_OK.test(`${hostName} ${e.url}`)) continue;
           tarjetas.push({
             name: `${FUENTE} (${hostName})`,
             title: titulo,

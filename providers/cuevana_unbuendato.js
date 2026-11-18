@@ -226,6 +226,7 @@ async function armar(lista, titulo, fuente) {
   for (const item of lista) {
     if (!item.url || vistos.has(item.url)) continue;
     vistos.add(item.url);
+    if (!HOSTS_OK.test(`${item.servidor || ''} ${item.url}`)) continue;
     tarjetas.push({
       orden: pesoAudio(item.audio || '') * 10000 + pesoCalidad(item.calidad || ''),
       t: tarjeta({
@@ -289,7 +290,8 @@ function limitar(buscador, respaldo) {
 /* ── 1) Cuevana3 (wv3.cuevana3.eu) ── */
 const FUENTE = 'Cuevana';
 const BASE = 'https://wv3.cuevana3.eu';
-const EVITAR = /netu|waaw|hqq|jetload/i;
+/* ── Lista blanca: solo se devuelven embeds de hosts que ya reproducen en la app ── */
+const HOSTS_OK = /voe|vidhide|vidhidepro|filelions|dhtpre|minochinos|ryderjet|vimeos|vimeus|morencius|filemoon|moonplayer|byse|kerapoxy|f16px|vidara|mxzhxco8dft/i;
 
 function datosNext(html) {
   const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
@@ -348,7 +350,7 @@ async function metodoSubmenu(titulos, tipo, temporada, episodio) {
       const marco = absoluta(entidades(tr), BASE);
       tareas.push(texto(marco, { headers: { Referer: pagina } }).then((h) => {
         const u = (h.match(/var url = '([^']+)'/) || [])[1];
-        return u && !EVITAR.test(u) ? { url: u, audio, referer: `${BASE}/`, servidor: nombreServidor(u) } : null;
+        return u ? { url: u, audio, referer: `${BASE}/`, servidor: nombreServidor(u) } : null;
       }));
     }
   }
@@ -366,7 +368,7 @@ async function metodoApi(datos, tipo, temporada, episodio) {
     const audio = audioDe(idioma);
     if (!audio || audio === 'Subtitulado') continue;
     for (const [servidor, enlaceSitio] of Object.entries(servidores || {})) {
-      if (enlaceSitio && !EVITAR.test(`${servidor} ${enlaceSitio}`) && !/mixdrop/i.test(servidor)) {
+      if (enlaceSitio) {
         lista.push({ url: enlaceSitio, audio, referer: 'https://cuevana.unbuendato.com/', servidor: nombreServidor(enlaceSitio) });
       }
     }
@@ -407,12 +409,12 @@ async function metodoMx(datos, tipo, temporada, episodio) {
     : `${ESPEJO_MX}/serie/${datos.id}/${nombre}/temporada/${temporada}/episodio/${episodio}`;
   const html = await texto(pagina, { headers: { Referer: `${ESPEJO_MX}/` } });
   if (!html) return [];
-  const opciones = opcionesClili(html).filter((o) => !EVITAR.test(`${o.servidor} ${o.tr}`));
+  const opciones = opcionesClili(html);
   const lista = await Promise.all(opciones.map(async (o) => {
     const marco = absoluta(o.tr, ESPEJO_MX);
     const h = await texto(marco, { headers: { Referer: pagina } });
     const u = (h.match(/(?:var|let)\s+url\s*=\s*['"]([^"']+)['"]/) || [])[1];
-    return u && !EVITAR.test(u) ? { url: absoluta(u, marco), audio: o.audio || 'Latino', referer: `${ESPEJO_MX}/`, servidor: nombreServidor(u) } : null;
+    return u ? { url: absoluta(u, marco), audio: o.audio || 'Latino', referer: `${ESPEJO_MX}/`, servidor: nombreServidor(u) } : null;
   }));
   return lista.filter(Boolean);
 }
@@ -531,11 +533,11 @@ async function metodoSiguiente(sitio, datos, tipo, temporada, episodio) {
   if (!pagina) return [];
   if (tipo === 'tv') pagina = episodioSiguiente(sitio, await texto(pagina, { headers: { Referer: `${sitio.base}/` } }), pagina, temporada, episodio);
   const html = await texto(pagina, { headers: { Referer: `${sitio.base}/` } });
-  const jugadores = jugadoresSiguiente(html).filter((j) => !EVITAR.test(`${j.servidor} ${j.url}`));
+  const jugadores = jugadoresSiguiente(html);
   anotar(`${rutaCorta(pagina)}: ${jugadores.length} reproductores`);
   const lista = await Promise.all(jugadores.map(async (j) => {
     const url = await destinoJugador(j.url, pagina).catch(() => '');
-    return url && !EVITAR.test(url) ? { url, audio: audioJugador(j.idioma), calidad: j.calidad || '', referer: `${sitio.base}/`, servidor: nombreServidor(url) } : null;
+    return url ? { url, audio: audioJugador(j.idioma), calidad: j.calidad || '', referer: `${sitio.base}/`, servidor: nombreServidor(url) } : null;
   }));
   const vistos = new Set();
   return lista.filter((x) => x && !vistos.has(x.url) && vistos.add(x.url));
