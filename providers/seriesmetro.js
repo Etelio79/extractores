@@ -224,6 +224,14 @@ function nombreServidor(url) {
   return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Directo';
 }
 
+/* ── Lista blanca: solo se devuelven embeds de hosts que ya reproducen en la app ──
+   Se compara contra el dominio del embed y contra el nombre que da el sitio (no contra la ruta). */
+const HOSTS_OK = /voe|marissashare|cloudwindow|vidhide|dintezuvio|diasfem|minochinos|dhtpre|ryderjet|filelions|vimeos|vimeus|morencius|filemoon|moonplayer|moonalu|moonembed|fmoon|byse|kerapoxy|f16px|r66nv9ed|398fitus|vidara|mxzhxco8dft/i;
+
+function hostPermitido(url, etiqueta) {
+  return HOSTS_OK.test(dominio(url)) || HOSTS_OK.test(String(etiqueta || ''));
+}
+
 /* ── Armar tarjetas SIN resolver (solo devuelve el embed) ── */
 async function armar(lista, titulo, fuente) {
   const vistos = new Set();
@@ -231,6 +239,7 @@ async function armar(lista, titulo, fuente) {
   for (const item of lista) {
     if (!item.url || vistos.has(item.url)) continue;
     vistos.add(item.url);
+    if (!hostPermitido(item.url, item.servidor)) continue;
     tarjetas.push({
       orden: pesoAudio(item.audio || '') * 10000 + pesoCalidad(item.calidad || ''),
       t: tarjeta({
