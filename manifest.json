@@ -1,6 +1,6 @@
 {
   "name": "Addon Etelio79",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "scrapers": [
     {
       "id": "allcalidad",
@@ -219,6 +219,17 @@
       "author": "Etelio79",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/seriesmetro.js",
+      "enabled": true,
+      "contentLanguage": ["es"]
+    },
+    {
+      "id": "vitaminagg",
+      "name": "VitaminaGG",
+      "description": "Peliculas, series y anime en Latino desde VitaminaGG (vitaminagg.vip).",
+      "version": "1.0.0",
+      "author": "Etelio79",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/vitaminagg.js",
       "enabled": true,
       "contentLanguage": ["es"]
     }
