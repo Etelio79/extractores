@@ -1,32 +1,34 @@
 (function () {
   'use strict';
-  const VERSION = '1.0.2'; // <-- Asegúrate de subir esta versión en tu version.json
+  const VERSION = '1.0.3';
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
-  
-  const BASE   = 'https://futbollibreplus.st'; 
-  const AGENDA = `${BASE}/agenda.php`;
 
+  // Nueva fuente de datos (API JSON)
+  const AGENDA_JSON = 'https://api.wqxag.com/diaries.json';
+
+  // Mapeo de pa�ses para las banderas (basado en lo que devuelve la API)
   const FLAGS = {
-    NAT: '🌍', COL: '🇨🇴', MEX: '🇲🇽', AR: '🇦🇷', URU: '🇺🇾', CHA: '🇨🇱',
-    ES: '🇪🇸', ENG: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', IT: '🇮🇹', BRA: '🇧🇷', FRA: '🇫🇷', ALE: '🇩🇪',
-    USA: '🇺🇸', ECU: '🇪🇨', PER: '🇵🇪', LIB: '🏆', SUD: '🏆',
-    CONNAT: '🌎', CONCACAFCHA: '🌎', UEFA: '🇪🇺',
-    NBA: '🏀', NFL: '🏈', MLB: '⚾', NHL: '🏒', UFC: '🥊', F1: '🏎️',
-    MOTOGP: '🏍️', BOX: '🥊', WWE: '🤼', VOLEY: '🏐', RUG: '🏉',
-    BAS: '🏀', TENIS: '🎾', TE: '🎾'
-  };
-
-  const MESES = {
-    enero: 0, febrero: 1, marzo: 2, abril: 3, mayo: 4, junio: 5,
-    julio: 6, agosto: 7, septiembre: 8, setiembre: 8, octubre: 9,
-    noviembre: 10, diciembre: 11
+    'Brasil': '',
+    'Argentina': '',
+    'M�xico': '',
+    'Colombia': '',
+    'Chile': '',
+    'Uruguay': '',
+    'Espa�a': '',
+    'Inglaterra': '',
+    'Italia': '',
+    'Francia': '',
+    'Alemania': '',
+    'Estados Unidos': '',
+    'Ecuador': '',
+    'Per�': ''
   };
 
   function b64dec(s) {
     try {
       if (typeof atob === 'function') {
         let str = s.replace(/-/g, '+').replace(/_/g, '/');
-        while (str.length % 4) str += '='; // Añade padding si falta
+        while (str.length % 4) str += '=';
         const bin = atob(str);
         let out = '';
         for (let i = 0; i < bin.length; i++) out += String.fromCharCode(bin.charCodeAt(i));
@@ -36,117 +38,120 @@
     return '';
   }
 
-  function fechaAgenda(html) {
-    // FIX: [A-Za-záéíóúñ]+ en vez de \w+ para detectar "Miércoles" y "Sábado"
-    const m = html.match(/Agenda\s*-\s*[A-Za-záéíóúñ]+\s+(\d{1,2})\s+de\s+([A-Za-záéíóúñ]+)\s+de\s+(\d{4})/i);
-    if (!m) return null;
-    const mes = MESES[m[2].toLowerCase()];
-    if (mes === undefined) return null;
-    return { dia: Number(m[1]), mes: mes, anio: Number(m[3]) };
-  }
-
-  function aUtc(fecha, hora) {
-    if (!fecha) return '';
-    const [h, min] = hora.split(':').map(Number);
-    const d = new Date(Date.UTC(fecha.anio, fecha.mes, fecha.dia, h, min || 0, 0));
-    return d.toISOString().replace(/\.\d{3}Z$/, '+00:00');
-  }
-
-  function parsearCanales(bloque) {
+  function extraerCanales(embeds) {
     const canales = [];
-    const rx = /<li class="subitem\d+">\s*<a href="\/eventos\.html\?r=([^"]+)"[^>]*>([\s\S]*?)<\/a><\/li>/g;
-    let m;
-    while ((m = rx.exec(bloque))) {
-      const url = b64dec(m[1]);
+    if (!embeds || !Array.isArray(embeds)) return canales;
+
+    for (const embed of embeds) {
+      const attrs = embed.attributes || {};
+      const nombre = (attrs.embed_name || '').trim();
+      const iframe = attrs.embed_iframe || '';
+      const match = iframe.match(/[?&]r=([^&]+)/);
+      if (!match) continue;
+
+      const url = b64dec(match[1]);
       if (!/^https?:\/\//.test(url)) continue;
-      const interior = m[2];
-      const cm = interior.match(/^([\s\S]*?)(?:<span>\s*([^<]*?)\s*<\/span>)?\s*$/);
-      const nombre  = (cm && cm[1] ? cm[1] : interior).replace(/\s+/g, ' ').trim();
-      const calidad = (cm && cm[2] ? cm[2] : '').trim();
+
+      // Extraer calidad del nombre (HD, SD, etc.)
+      const calidadMatch = nombre.match(/\b(HD|SD|FHD|4K)\b/i);
+      const calidad = calidadMatch ? calidadMatch[0] : '';
+
       canales.push({ name: nombre, url: url, quality: calidad });
     }
     return canales;
   }
 
-  function parsearAgenda(html) {
-    const fecha = fechaAgenda(html);
-    const eventos = [];
-    
-    // FIX: Acepta cualquier etiqueta <a> en el título, no solo <a href="#">
-    const rx = /<li class="([^"]+)">\s*<a[^>]*>\s*([\s\S]*?)\s*<span class="t">(\d{1,2}:\d{2})<\/span><\/a>\s*<ul>([\s\S]*?)<\/ul>\s*<\/li>/g;
-    let m;
-    
-    while ((m = rx.exec(html))) {
-      const clase = m[1].trim();
-      const bruto = m[2].replace(/\s+/g, ' ').trim();
-      const hora  = m[3];
-      const canales = parsearCanales(m[4]);
-      
-      // FIX: Quitamos el "if (!canales.length) continue;" para mostrar partidos sin enlaces aún
-      
-      const partes = bruto.split(':');
-      const liga   = partes.length > 1 ? partes[0].trim() : '';
-      const match  = partes.length > 1 ? partes.slice(1).join(':').trim() : bruto;
+  function parsearEvento(item) {
+    const attrs = item.attributes || {};
+    const descripcion = attrs.diary_description || '';
+    const hora = attrs.diary_hour ? attrs.diary_hour.substring(0, 5) : '';
+    const fechaStr = attrs.date_diary || ''; // YYYY-MM-DD
 
-      eventos.push({
-        time:     hora,
-        time_utc: aUtc(fecha, hora),
-        match:    match,
-        league:   liga || clase,
-        flag:     FLAGS[clase] || '⚽',
-        channels: canales // Puede venir vacío []
-      });
-    }
-    return eventos;
-  }
+    // --- L�GICA MEJORADA PARA SEPARAR LIGA Y EQUIPOS ---
+    let liga = '';
+    let match = descripcion.trim();
 
-  async function traer(url, opciones) {
-    if (typeof window.nativeFetch === 'function') {
-      return window.nativeFetch(url, opciones);
+    // 1. Intentar dividir por ':' (Ej: "Brasileir�o: Remo vs Chapecoense")
+    if (match.includes(':')) {
+      const partes = match.split(':');
+      liga = partes[0].trim();
+      match = partes.slice(1).join(':').trim();
+    } 
+    // 2. Intentar dividir por '�' o '-' (Ej: "Tenis � Nitto ATP Final" o "NBA - Dallas...")
+    else if (match.includes('�')) {
+      const partes = match.split('�');
+      liga = partes[0].trim();
+      match = partes.slice(1).join('�').trim();
+    } 
+    else if (match.includes(' - ')) {
+      const partes = match.split(' - ');
+      liga = partes[0].trim();
+      match = partes.slice(1).join(' - ').trim();
     }
-    return fetch(url, opciones);
+
+    // Construir fecha UTC (igual que antes)
+    let time_utc = '';
+    if (fechaStr && hora) {
+      const [anio, mes, dia] = fechaStr.split('-').map(Number);
+      const [h, min] = hora.split(':').map(Number);
+      const d = new Date(Date.UTC(anio, mes - 1, dia, h, min || 0, 0));
+      time_utc = d.toISOString().replace(/\.\d{3}Z$/, '+00:00');
+    }
+
+    // Pa�s y bandera
+    const pais = attrs.country?.data?.attributes?.name || '';
+    // Si el pa�s no est� en el diccionario (como NBA o Tenis), usa el bal�n de f�tbol por defecto
+    const flag = FLAGS[pais] || ''; 
+
+    // Canales
+    const canales = extraerCanales(attrs.embeds?.data);
+
+    return {
+      time: hora,
+      time_utc: time_utc,
+      league: liga,     // Arriba: Liga o Deporte
+      match: match,     // Abajo: Equipos o Evento
+      flag: flag,
+      channels: canales
+    };
   }
 
   async function getEventos() {
-    const o = {
+    const opciones = {
+      method: 'GET',
       headers: {
         'User-Agent': UA,
-        Accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
-        'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8',
-        Referer: `${BASE}/`
+        'Accept': 'application/json',
+        'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8'
       }
     };
-    
+
     try {
-      console.log('[Eventos] Buscando en la agenda...');
-      const r = await traer(AGENDA, o);
-      
-      if (!r || !r.ok) {
-        console.warn('[Eventos] Fallo HTTP:', r ? r.status : 'Sin respuesta');
+      console.log('[Eventos] Consultando API JSON...');
+      const respuesta = await fetch(AGENDA_JSON, opciones);
+
+      if (!respuesta.ok) {
+        console.warn('[Eventos] Error HTTP:', respuesta.status);
         return [];
       }
-      
-      const html = await r.text();
-      if (!html || html.length < 500) {
-        console.warn('[Eventos] HTML vacío o bloqueado por Cloudflare.');
-        return [];
-      }
-      
-      const eventos = parsearAgenda(html);
-      if (!eventos.length) {
-        console.warn('[Eventos] Se obtuvo la página, pero la estructura HTML cambió (el regex falló).');
-      } else {
-        console.log('[Eventos] ¡Éxito! Extraídos', eventos.length, 'partidos.');
-      }
-      
+
+      const json = await respuesta.json();
+      const items = json.data || [];
+
+      const eventos = items
+        .filter(item => item.attributes && item.attributes.diary_description)
+        .map(parsearEvento);
+
+      console.log(`[Eventos] Extra�dos ${eventos.length} partidos.`);
       return eventos;
     } catch (e) {
-      console.warn('[Eventos] Error de red:', e.message);
+      console.warn('[Eventos] Error de red o parseo:', e.message);
       return [];
     }
   }
 
-  window.getEventos = function() {
+  // Exponer la funci�n globalmente
+  window.getEventos = function () {
     return Promise.resolve().then(() => getEventos()).catch(() => []);
   };
 })();
