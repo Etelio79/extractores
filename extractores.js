@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
 
   const resolverUniversal = (function () {
     const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
@@ -388,6 +388,12 @@
     }
 
     async function resolverVidhide(url, referer) {
+      if (/\.(m3u8|mp4)(\?|#|$)/i.test(url)) {
+        const casa = origen(url);
+        const cabeceras = { Referer: casa + '/', Origin: casa, 'User-Agent': UA };
+        return enlace(url, 'VidHide', cabeceras);
+      }
+
       const id = url.replace(/[?#].*$/, '').split('/').filter(Boolean).pop().replace(/\.html$/, '');
       const propio = await resolverEmpaquetado(url, 'VidHide', referer);
       if (propio.length) return propio;
