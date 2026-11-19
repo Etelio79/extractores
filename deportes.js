@@ -241,7 +241,7 @@
         return { ok: true, ms: 0, status: 200, play: { url, kind: /\.mp4(\?|$)/i.test(url) ? 'mp4' : 'm3u8', headers: { 'User-Agent': UA } } };
       }
 
-      if (/embed\.|saohgdassregions|ksdjugf|deportes\./i.test(url)) {
+      if (/embed\.|saohgdassregions|ksdjugf|deportes\.|tvf90\./i.test(url)) {
         const r = await _nf(url, { headers: { 'User-Agent': UA, 'Referer': url } });
         if (!r || !r.ok) return { ok: false, ms: Date.now() - t0, status: 0 };
 
