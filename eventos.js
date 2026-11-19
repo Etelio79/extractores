@@ -1,27 +1,27 @@
 (function () {
   'use strict';
-  const VERSION = '1.0.3';
+  const VERSION = '1.0.4';
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
 
   // Nueva fuente de datos (API JSON)
   const AGENDA_JSON = 'https://api.wqxag.com/diaries.json';
 
-  // Mapeo de países para las banderas (basado en lo que devuelve la API)
+  // Mapeo de paÃ­ses para las banderas (basado en lo que devuelve la API)
   const FLAGS = {
     'Brasil': '',
     'Argentina': '',
-    'México': '',
+    'MÃ©xico': '',
     'Colombia': '',
     'Chile': '',
     'Uruguay': '',
-    'España': '',
+    'EspaÃ±a': '',
     'Inglaterra': '',
     'Italia': '',
     'Francia': '',
     'Alemania': '',
     'Estados Unidos': '',
     'Ecuador': '',
-    'Perú': ''
+    'PerÃº': ''
   };
 
   function b64dec(s) {
@@ -67,21 +67,21 @@
     const hora = attrs.diary_hour ? attrs.diary_hour.substring(0, 5) : '';
     const fechaStr = attrs.date_diary || ''; // YYYY-MM-DD
 
-    // --- LÓGICA MEJORADA PARA SEPARAR LIGA Y EQUIPOS ---
+    // --- LÃ“GICA MEJORADA PARA SEPARAR LIGA Y EQUIPOS ---
     let liga = '';
     let match = descripcion.trim();
 
-    // 1. Intentar dividir por ':' (Ej: "Brasileirão: Remo vs Chapecoense")
+    // 1. Intentar dividir por ':' (Ej: "BrasileirÃ£o: Remo vs Chapecoense")
     if (match.includes(':')) {
       const partes = match.split(':');
       liga = partes[0].trim();
       match = partes.slice(1).join(':').trim();
     } 
-    // 2. Intentar dividir por '–' o '-' (Ej: "Tenis – Nitto ATP Final" o "NBA - Dallas...")
-    else if (match.includes('–')) {
-      const partes = match.split('–');
+    // 2. Intentar dividir por 'â€“' o '-' (Ej: "Tenis â€“ Nitto ATP Final" o "NBA - Dallas...")
+    else if (match.includes('â€“')) {
+      const partes = match.split('â€“');
       liga = partes[0].trim();
-      match = partes.slice(1).join('–').trim();
+      match = partes.slice(1).join('â€“').trim();
     } 
     else if (match.includes(' - ')) {
       const partes = match.split(' - ');
@@ -98,9 +98,9 @@
       time_utc = d.toISOString().replace(/\.\d{3}Z$/, '+00:00');
     }
 
-    // País y bandera
+    // PaÃ­s y bandera
     const pais = attrs.country?.data?.attributes?.name || '';
-    // Si el país no está en el diccionario (como NBA o Tenis), usa el balón de fútbol por defecto
+    // Si el paÃ­s no estÃ¡ en el diccionario (como NBA o Tenis), usa el balÃ³n de fÃºtbol por defecto
     const flag = FLAGS[pais] || ''; 
 
     // Canales
@@ -142,7 +142,7 @@
         .filter(item => item.attributes && item.attributes.diary_description)
         .map(parsearEvento);
 
-      console.log(`[Eventos] Extraídos ${eventos.length} partidos.`);
+      console.log(`[Eventos] ExtraÃ­dos ${eventos.length} partidos.`);
       return eventos;
     } catch (e) {
       console.warn('[Eventos] Error de red o parseo:', e.message);
@@ -150,7 +150,7 @@
     }
   }
 
-  // Exponer la función globalmente
+  // Exponer la funciÃ³n globalmente
   window.getEventos = function () {
     return Promise.resolve().then(() => getEventos()).catch(() => []);
   };
