@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.0.4';
+  const VERSION = '1.0.6';
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
 
   // Nueva fuente de datos (API JSON)
@@ -8,20 +8,20 @@
 
   // Mapeo de países para las banderas (basado en lo que devuelve la API)
   const FLAGS = {
-    'Brasil': '',
-    'Argentina': '',
-    'México': '',
-    'Colombia': '',
-    'Chile': '',
-    'Uruguay': '',
-    'España': '',
-    'Inglaterra': '',
-    'Italia': '',
-    'Francia': '',
-    'Alemania': '',
-    'Estados Unidos': '',
-    'Ecuador': '',
-    'Perú': ''
+    'Brasil': '🇧🇷',
+    'Argentina': '🇦🇷',
+    'México': '🇲🇽',
+    'Colombia': '🇨🇴',
+    'Chile': '🇨🇱',
+    'Uruguay': '🇺🇾',
+    'España': '🇪🇸',
+    'Inglaterra': '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    'Italia': '🇮🇹',
+    'Francia': '🇫🇷',
+    'Alemania': '🇩🇪',
+    'Estados Unidos': '🇺🇸',
+    'Ecuador': '🇪🇨',
+    'Perú': '🇵🇪'
   };
 
   function b64dec(s) {
@@ -89,19 +89,23 @@
       match = partes.slice(1).join(' - ').trim();
     }
 
-    // Construir fecha UTC (igual que antes)
+    // Construir fecha UTC (AQUÍ ESTÁ LA CORRECCIÓN DE LAS 5 HORAS)
     let time_utc = '';
     if (fechaStr && hora) {
       const [anio, mes, dia] = fechaStr.split('-').map(Number);
       const [h, min] = hora.split(':').map(Number);
-      const d = new Date(Date.UTC(anio, mes - 1, dia, h, min || 0, 0));
+      
+      // Se suma +5 a la hora (h + 5) antes de crear el objeto Date.
+      // Date.UTC maneja automáticamente si las horas pasan de 23 (ej. 22:00 + 5h = 03:00 del día siguiente).
+      const d = new Date(Date.UTC(anio, mes - 1, dia, h + 5, min || 0, 0));
+      
       time_utc = d.toISOString().replace(/\.\d{3}Z$/, '+00:00');
     }
 
     // País y bandera
     const pais = attrs.country?.data?.attributes?.name || '';
     // Si el país no está en el diccionario (como NBA o Tenis), usa el balón de fútbol por defecto
-    const flag = FLAGS[pais] || ''; 
+    const flag = FLAGS[pais] || '⚽'; 
 
     // Canales
     const canales = extraerCanales(attrs.embeds?.data);
