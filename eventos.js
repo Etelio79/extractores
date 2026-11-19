@@ -1,12 +1,10 @@
 (function () {
   'use strict';
-  const VERSION = '1.0.6';
+  const VERSION = '1.0.7';
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
 
-  // Nueva fuente de datos (API JSON)
   const AGENDA_JSON = 'https://api.wqxag.com/diaries.json';
 
-  // Mapeo de países para las banderas (basado en lo que devuelve la API)
   const FLAGS = {
     'Brasil': '🇧🇷',
     'Argentina': '🇦🇷',
@@ -52,7 +50,6 @@
       const url = b64dec(match[1]);
       if (!/^https?:\/\//.test(url)) continue;
 
-      // Extraer calidad del nombre (HD, SD, etc.)
       const calidadMatch = nombre.match(/\b(HD|SD|FHD|4K)\b/i);
       const calidad = calidadMatch ? calidadMatch[0] : '';
 
@@ -67,17 +64,14 @@
     const hora = attrs.diary_hour ? attrs.diary_hour.substring(0, 5) : '';
     const fechaStr = attrs.date_diary || ''; // YYYY-MM-DD
 
-    // --- LÓGICA MEJORADA PARA SEPARAR LIGA Y EQUIPOS ---
     let liga = '';
     let match = descripcion.trim();
 
-    // 1. Intentar dividir por ':' (Ej: "Brasileirão: Remo vs Chapecoense")
     if (match.includes(':')) {
       const partes = match.split(':');
       liga = partes[0].trim();
       match = partes.slice(1).join(':').trim();
     } 
-    // 2. Intentar dividir por '–' o '-' (Ej: "Tenis – Nitto ATP Final" o "NBA - Dallas...")
     else if (match.includes('–')) {
       const partes = match.split('–');
       liga = partes[0].trim();
@@ -89,32 +83,40 @@
       match = partes.slice(1).join(' - ').trim();
     }
 
-    // Construir fecha UTC (AQUÍ ESTÁ LA CORRECCIÓN DE LAS 5 HORAS)
+    // --- CORRECCIÓN DE LAS 5 HORAS AQUÍ ---
     let time_utc = '';
+    let hora_corregida = hora; // Mantenemos el valor original por defecto
+    
     if (fechaStr && hora) {
       const [anio, mes, dia] = fechaStr.split('-').map(Number);
       const [h, min] = hora.split(':').map(Number);
       
-      // Se suma +5 a la hora (h + 5) antes de crear el objeto Date.
-      // Date.UTC maneja automáticamente si las horas pasan de 23 (ej. 22:00 + 5h = 03:00 del día siguiente).
-      const d = new Date(Date.UTC(anio, mes - 1, dia, h + 5, min || 0, 0));
+      // Creamos la fecha en UTC
+      const d = new Date(Date.UTC(anio, mes - 1, dia, h, min || 0, 0));
+      
+      // Le sumamos 5 horas para compensar la resta de tu app
+      d.setUTCHours(d.getUTCHours() + 5);
       
       time_utc = d.toISOString().replace(/\.\d{3}Z$/, '+00:00');
+      
+      // Formateamos la hora adelantada (ej: si era 19:30, ahora es 00:30)
+      // Esto es por si tu app usa el campo "time" en vez de "time_utc"
+      const nuevaH = String(d.getUTCHours()).padStart(2, '0');
+      const nuevoMin = String(d.getUTCMinutes()).padStart(2, '0');
+      hora_corregida = `${nuevaH}:${nuevoMin}`;
     }
+    // --------------------------------------
 
-    // País y bandera
     const pais = attrs.country?.data?.attributes?.name || '';
-    // Si el país no está en el diccionario (como NBA o Tenis), usa el balón de fútbol por defecto
     const flag = FLAGS[pais] || '⚽'; 
 
-    // Canales
     const canales = extraerCanales(attrs.embeds?.data);
 
     return {
-      time: hora,
-      time_utc: time_utc,
-      league: liga,     // Arriba: Liga o Deporte
-      match: match,     // Abajo: Equipos o Evento
+      time: hora_corregida, // <-- Ahora envía la hora + 5
+      time_utc: time_utc,   // <-- Ahora envía el UTC + 5
+      league: liga,     
+      match: match,     
       flag: flag,
       channels: canales
     };
@@ -154,7 +156,6 @@
     }
   }
 
-  // Exponer la función globalmente
   window.getEventos = function () {
     return Promise.resolve().then(() => getEventos()).catch(() => []);
   };
