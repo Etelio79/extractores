@@ -152,32 +152,29 @@ function audioDe(t) {
   return '';
 }
 
-const __SRV = [
-  [/voe/i, 'Voe'], [/filemoon|moonplayer|byse|kerapoxy|f16px/i, 'Filemoon'],
-  [/streamwish|hglink|vibuxer|hlswish|wishembed|awish|swdyu|strwish|streamhg|dhcplay|wishfast|embedwish|hanerix|cdnwish/i, 'StreamWish'],
-  [/vidhide|filelions|dhtpre|minochinos|ryderjet|vidhidepro/i, 'VidHide'],
-  [/vimeos|vimeus/i, 'Vimeos'], [/morencius/i, 'Morencius'],
-  [/dood|d000d|ds2play/i, 'DoodStream'], [/mixdrop/i, 'MixDrop'], [/streamtape/i, 'StreamTape'],
-  [/uqload/i, 'Uqload'], [/mp4upload/i, 'Mp4Upload'], [/ok\.ru/i, 'OK.ru'],
-  [/wolfstream/i, 'Wolfstream'], [/waaw\.to|hqq\.tv|netu\./i, 'Netu'],
-  [/workers\.dev/i, 'Workers']   // ← nuevo: etiqueta para *.workers.dev
+/* ── Lista blanca: solo los 7 hosts que ya reproducen en extractores.js (mismos patrones). Sin lista negra. ── */
+const HOSTS_REPRODUCEN = [
+  ['Voe', /voe\.sx|voe-unblock|voeunbl|v-o-e|voe\./i],
+  ['VidHide', /vidhide|filelions|ryderjet|dintezuvio|mivalyo|dhtpre|peytonepre|smoothpre|louishide|lylxan|movearnpre|kinoger|alions|azipcdn|nikaplayer|fviplions|niikaplayerr|callistanise|dinisglows|dingtezuni|minochinos|taylorplayer/i],
+  ['Vimeos', /vimeos/i],
+  ['Vidara', /vidara\.|mxzhxco8dft/i],
+  ['StreamWish', /streamwish|embedwish|hlswish|playerwish|swiftplayers|swishsrv|wishembed|wishfast|sfastwish|strmwis|\b[amd]wish\.(?:pro|top)|hglink\.to|hgcloud\.to|dhcplay|gradehgplus|ultpreplayer|haxloppd|stbhg|playnixes|hanerix|hglamioz|niramirus|medixiru|audinifer|vibuxer|hgplaycdn|vsembed|ajmidyad|khadhnayad|atabknha/i],
+  ['Filemoon', /filemoon|moonplayer|byse[a-z]*\.|bf0skv|moflix-stream/i],
+  ['Workers', /workers\.dev/i]
 ];
-function __nombreSrv(url) {
-  let h = '';
-  try { h = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch (_) { return 'Servidor'; }
-  for (const [p, n] of __SRV) if (p.test(h)) return n;
-  const partes = h.split('.');
-  const n = partes.length > 1 ? partes[partes.length - 2] : h;
-  return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Servidor';
+
+/* Devuelve el nombre del host si es uno de los 7; si no, null. Solo hostname (no path/query) y solo https. */
+function hostPermitido(url, etiqueta) {
+  let u;
+  try { u = new URL(url); } catch (_) { return null; }
+  if (u.protocol !== 'https:') return null;
+  const base = u.hostname.toLowerCase().split('.').slice(-2).join('.');
+  for (const [nombre, patron] of HOSTS_REPRODUCEN) if (patron.test(base)) return nombre;
+  // Voe y otros usan muchos dominios: se acepta si el sitio lo etiqueta como uno de los 7
+  const et = String(etiqueta || '').toLowerCase();
+  if (et) for (const [nombre, patron] of HOSTS_REPRODUCEN) if (et.includes(nombre.toLowerCase()) || patron.test(et)) return nombre;
+  return null;
 }
-
-/* ── Lista blanca (whitelist) ──
-   Mismos patrones del proveedor allpeliculasse + workers (Cloudflare Workers *.workers.dev). */
-const HOSTS_OK = /voe|vidhide|vidhidepro|filelions|dhtpre|minochinos|ryderjet|vimeos|vimeus|morencius|filemoon|moonplayer|byse|kerapoxy|f16px|vidara|mxzhxco8dft|workers\.dev/i;
-
-/* ── Lista negra (blacklist) ──
-   Hosts de descarga directa y acortadores que nunca son embeds reproducibles. */
-const HOSTS_BLOQUEADOS = /^(?:megaup\.net|1fichier\.com|mediafire\.com|rapidgator\.net|katfile\.com|nitroflare\.com|ddownload\.com|turbobit\.net|uploaded\.net|filefactory\.com|acortalink\.me|acortalink\.net|adf\.ly|adfly\.com|linkvertise\.com|ouo\.io|shrinkme\.io|shorte\.st|clk\.sh)$/i;
 
 function _limpia(s) {
   return String(s || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
@@ -187,11 +184,7 @@ function esValido(url, urlOriginal) {
   if (!url || !/^https?:\/\//i.test(url)) return false;
   if (/^magnet:/i.test(url)) return false;
   if (urlOriginal && _limpia(url) === _limpia(urlOriginal)) return false;
-  try {
-    const h = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
-    if (HOSTS_BLOQUEADOS.test(h)) return false;          // blacklist
-    if (!HOSTS_OK.test(h) && !HOSTS_OK.test(url)) return false; // whitelist (host o URL)
-  } catch (_) { return false; }
+  if (!hostPermitido(url)) return false; // lista blanca (solo los 7 hosts)
   return true;
 }
 
@@ -273,9 +266,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       for (const o of opciones) {
         const src = (o.match(/data-src=["']([^"']+)["']/) || o.match(/<iframe[^>]+src=["']([^"']+)["']/i) || [])[1];
         if (!src || vistos.has(src)) continue;
-        if (!esValido(src, pagina)) continue;   // ← whitelist + blacklist aquí
+        if (!esValido(src, pagina)) continue;   // ← lista blanca aquí
         vistos.add(src);
-        const host = __nombreSrv(src);
+        const host = hostPermitido(src);
         const audio = ruta === 'anime' ? '' : 'Latino';
         tarjetas.push({
           orden: pesoAudio(audio) * 10000 + pesoCalidad(''),

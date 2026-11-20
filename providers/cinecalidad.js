@@ -148,8 +148,29 @@ function audioDe(t) { const s = normalizar(t); if (!s) return ''; if (/latino|\b
 
 function limitar(buscador, respaldo) { return (...argumentos) => { inicio = Date.now(); caidos.clear(); registro = []; const trabajo = conLimite(Promise.resolve().then(() => buscador(...argumentos)), CIERRE, null); return respaldo ? trabajo.then((salida) => (salida && salida.length ? salida : respaldo(salida === null))) : trabajo.then((salida) => salida || []); }; }
 
-/* ── Lista blanca: solo se devuelven embeds de hosts que ya reproducen en la app ── */
-const HOSTS_OK = /voe|vidhide|vidhidepro|filelions|dhtpre|minochinos|ryderjet|vimeos|vimeus|morencius|filemoon|moonplayer|byse|kerapoxy|f16px|vidara|mxzhxco8dft/i;
+/* ── Lista blanca: solo los 7 hosts que ya reproducen en extractores.js (mismos patrones). Sin lista negra. ── */
+const HOSTS_REPRODUCEN = [
+  ['Voe', /voe\.sx|voe-unblock|voeunbl|v-o-e|voe\./i],
+  ['VidHide', /vidhide|filelions|ryderjet|dintezuvio|mivalyo|dhtpre|peytonepre|smoothpre|louishide|lylxan|movearnpre|kinoger|alions|azipcdn|nikaplayer|fviplions|niikaplayerr|callistanise|dinisglows|dingtezuni|minochinos|taylorplayer/i],
+  ['Vimeos', /vimeos/i],
+  ['Vidara', /vidara\.|mxzhxco8dft/i],
+  ['StreamWish', /streamwish|embedwish|hlswish|playerwish|swiftplayers|swishsrv|wishembed|wishfast|sfastwish|strmwis|\b[amd]wish\.(?:pro|top)|hglink\.to|hgcloud\.to|dhcplay|gradehgplus|ultpreplayer|haxloppd|stbhg|playnixes|hanerix|hglamioz|niramirus|medixiru|audinifer|vibuxer|hgplaycdn|vsembed|ajmidyad|khadhnayad|atabknha/i],
+  ['Filemoon', /filemoon|moonplayer|byse[a-z]*\.|bf0skv|moflix-stream/i],
+  ['Workers', /workers\.dev/i]
+];
+
+/* Devuelve el nombre del host si es uno de los 7; si no, null. Solo hostname (no path/query) y solo https. */
+function hostPermitido(url, etiqueta) {
+  let u;
+  try { u = new URL(url); } catch (_) { return null; }
+  if (u.protocol !== 'https:') return null;
+  const base = u.hostname.toLowerCase().split('.').slice(-2).join('.');
+  for (const [nombre, patron] of HOSTS_REPRODUCEN) if (patron.test(base)) return nombre;
+  // Voe y otros usan muchos dominios: se acepta si el sitio lo etiqueta como uno de los 7
+  const et = String(etiqueta || '').toLowerCase();
+  if (et) for (const [nombre, patron] of HOSTS_REPRODUCEN) if (et.includes(nombre.toLowerCase()) || patron.test(et)) return nombre;
+  return null;
+}
 
 /* ══════════════════ BUSCADOR CINECALIDAD ══════════════════ */
 const FUENTE = 'CineCalidad';
@@ -299,8 +320,8 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         for (const e of lista) {
           if (!e.url || vistos.has(e.url)) continue;
           vistos.add(e.url);
-          const hostName = (() => { try { const h = new URL(e.url).hostname.replace(/^www\./, '').toLowerCase(); const p = h.split('.'); return p.length > 1 ? p[p.length - 2].charAt(0).toUpperCase() + p[p.length - 2].slice(1) : h; } catch(_) { return 'Servidor'; } })();
-          if (!HOSTS_OK.test(`${hostName} ${e.url}`)) continue;
+          const hostName = hostPermitido(e.url);
+          if (!hostName) continue;
           tarjetas.push({
             name: `${FUENTE} (${hostName})`,
             title: titulo,

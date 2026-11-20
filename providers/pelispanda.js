@@ -3,31 +3,37 @@ const FUENTE = 'PelisPanda';
 const PANDADOMAIN = 'https://pelispanda.org';
 const REFERER = 'https://pelispanda.org/';
 
-/* ── Lista blanca: solo se devuelven embeds de hosts que ya reproducen en la app ──
-   Se compara contra el dominio del embed y contra el nombre que da el sitio (no contra la ruta). */
-const HOSTS_OK = /voe|marissashare|cloudwindow|vidhide|dintezuvio|diasfem|minochinos|dhtpre|ryderjet|filelions|vimeos|vimeus|morencius|filemoon|moonplayer|moonalu|moonembed|fmoon|byse|kerapoxy|f16px|r66nv9ed|398fitus|vidara|mxzhxco8dft/i;
-const NOMBRES = [
-  [/voe|marissashare|cloudwindow/i, 'Voe'], [/filemoon|moonplayer|moonalu|moonembed|fmoon|byse|kerapoxy|f16px|r66nv9ed|398fitus/i, 'Filemoon'],
-  [/vidhide|dintezuvio|diasfem|minochinos|dhtpre|ryderjet/i, 'VidHide'], [/filelions/i, 'FileLions'],
-  [/vimeos|vimeus/i, 'Vimeos'], [/morencius/i, 'Morencius'], [/vidara|mxzhxco8dft/i, 'Vidara']
+/* ── Lista blanca: solo los 7 hosts que ya reproducen en extractores.js (mismos patrones). Sin lista negra. ── */
+const HOSTS_REPRODUCEN = [
+  ['Voe', /voe\.sx|voe-unblock|voeunbl|v-o-e|voe\./i],
+  ['VidHide', /vidhide|filelions|ryderjet|dintezuvio|mivalyo|dhtpre|peytonepre|smoothpre|louishide|lylxan|movearnpre|kinoger|alions|azipcdn|nikaplayer|fviplions|niikaplayerr|callistanise|dinisglows|dingtezuni|minochinos|taylorplayer/i],
+  ['Vimeos', /vimeos/i],
+  ['Vidara', /vidara\.|mxzhxco8dft/i],
+  ['StreamWish', /streamwish|embedwish|hlswish|playerwish|swiftplayers|swishsrv|wishembed|wishfast|sfastwish|strmwis|\b[amd]wish\.(?:pro|top)|hglink\.to|hgcloud\.to|dhcplay|gradehgplus|ultpreplayer|haxloppd|stbhg|playnixes|hanerix|hglamioz|niramirus|medixiru|audinifer|vibuxer|hgplaycdn|vsembed|ajmidyad|khadhnayad|atabknha/i],
+  ['Filemoon', /filemoon|moonplayer|byse[a-z]*\.|bf0skv|moflix-stream/i],
+  ['Workers', /workers\.dev/i]
 ];
+
+/* Devuelve el nombre del host si es uno de los 7; si no, null. Solo hostname (no path/query) y solo https. */
+function hostPermitido(url, etiqueta) {
+  let u;
+  try { u = new URL(url); } catch (_) { return null; }
+  if (u.protocol !== 'https:') return null;
+  const base = u.hostname.toLowerCase().split('.').slice(-2).join('.');
+  for (const [nombre, patron] of HOSTS_REPRODUCEN) if (patron.test(base)) return nombre;
+  // Voe y otros usan muchos dominios: se acepta si el sitio lo etiqueta como uno de los 7
+  const et = String(etiqueta || '').toLowerCase();
+  if (et) for (const [nombre, patron] of HOSTS_REPRODUCEN) if (et.includes(nombre.toLowerCase()) || patron.test(et)) return nombre;
+  return null;
+}
 
 function dominio(url) {
   const m = String(url || '').match(/^(?:https?:)?\/\/([^/?#:]+)/i);
   return m ? m[1].toLowerCase().replace(/^www\./, '') : '';
 }
 
-function hostPermitido(url, etiqueta) {
-  return HOSTS_OK.test(dominio(url)) || HOSTS_OK.test(String(etiqueta || ''));
-}
-
 function nombreServidor(url, etiqueta) {
-  const h = dominio(url);
-  for (const [p, n] of NOMBRES) if (p.test(h)) return n;
-  for (const [p, n] of NOMBRES) if (p.test(String(etiqueta || ''))) return n;
-  const partes = h.split('.');
-  const n = partes.length > 1 ? partes[partes.length - 2] : h;
-  return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Servidor';
+  return hostPermitido(url, etiqueta) || 'Servidor';
 }
 
 const ES_TV = typeof __plugin_sleep !== 'function' && typeof __cheerio_load === 'function';
