@@ -1,6 +1,470 @@
 (function () {
   'use strict';
-  const VERSION = '1.1.1';
+  const VERSION = '1.1.2';
+
+  const resolverFilemoon = (function () {
+    const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
+    const RELOJ = typeof setTimeout === 'function';
+    const CIERRE = RELOJ ? 50000 : 40000;
+    const ALIAS = ['filemoon.sx', 'filemoon.site', 'bysezejataos.com', 'bysebuho.com', 'bysekoze.com', 'bysejikuar.com', 'bysezoxexe.com', 'bysesayeveum.com', 'byselapuix.com', 'bf0skv.org', 'moflix-stream.link'];
+    let inicio = Date.now();
+    let _nf = null;
+    let galletas = {};
+    let deviceId = '';
+
+    function esperar(ms) { return RELOJ ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve(); }
+    function transcurrido() { return Date.now() - inicio; }
+
+    function conLimite(promesa, ms, valor) {
+      let listo = false;
+      const fin = Date.now() + ms;
+      const trabajo = Promise.resolve(promesa).then((v) => { listo = true; return v; }, () => { listo = true; return valor; });
+      if (!RELOJ) return trabajo;
+      const reloj = (async () => {
+        while (!listo && Date.now() < fin) await esperar(Math.max(1, Math.min(250, fin - Date.now())));
+        return valor;
+      })();
+      return Promise.race([trabajo, reloj]);
+    }
+
+    function origen(url) { const m = String(url || '').match(/^(https?:\/\/[^/?#]+)/i); return m ? m[1] : ''; }
+    function dominio(url) { const m = String(url || '').match(/^(?:https?:)?\/\/([^/?#:]+)/i); return m ? m[1].toLowerCase() : ''; }
+    function absoluta(url, base) {
+      const u = String(url || '').trim();
+      if (!u) return '';
+      if (/^https?:\/\//i.test(u)) return u;
+      if (u.startsWith('//')) return `https:${u}`;
+      if (u.startsWith('/')) return origen(base) + u;
+      return origen(base) + '/' + u;
+    }
+
+    async function traer(url, opciones) {
+      opciones = opciones || {};
+      const r = await _nf(url, opciones);
+      let cuerpo = '';
+      try { cuerpo = (await r.text()) || ''; } catch (_) {}
+      let sc = [];
+      try {
+        if (r.headers) {
+          if (typeof r.headers.getSetCookie === 'function') sc = r.headers.getSetCookie() || [];
+          else { const v = r.headers.get && r.headers.get('set-cookie'); if (v) sc = String(v).split(/,(?=\s*[^;,\s]+=)/); }
+        }
+      } catch (_) {}
+      return { ok: !!r.ok, status: r.status, url: r.url || url, cookies: sc, text: () => Promise.resolve(cuerpo) };
+    }
+
+    async function pedir(url, opciones) {
+      const o = Object.assign({}, opciones || {});
+      const host = dominio(url);
+      const jar = galletas[host] || {};
+      const c = Object.keys(jar).map((k) => `${k}=${jar[k]}`).join('; ');
+      o.headers = Object.assign({ 'User-Agent': UA, Accept: 'application/json, text/plain, */*', 'Accept-Language': 'en-US,en;q=0.9' }, c ? { Cookie: c } : {}, o.headers || {});
+      const r = await conLimite(traer(url, o).catch((e) => ({ status: 0, statusText: e && e.message, cookies: [] })), CIERRE - transcurrido(), null);
+      if (r && r.cookies && r.cookies.length) {
+        galletas[host] = galletas[host] || {};
+        r.cookies.forEach((s) => { const p = String(s).split(';')[0]; const i = p.indexOf('='); if (i > 0) galletas[host][p.slice(0, i).trim()] = p.slice(i + 1).trim(); });
+      }
+      return r;
+    }
+
+    async function api(url, metodo, cuerpo, cabeceras) {
+      const o = { method: metodo, headers: Object.assign({}, cabeceras || {}) };
+      if (cuerpo !== null && cuerpo !== undefined) { o.body = JSON.stringify(cuerpo); o.headers['Content-Type'] = 'application/json'; }
+      const r = await pedir(url, o);
+      if (!r) return { ok: false, status: 0, json: null };
+      let t = ''; try { t = (await conLimite(r.text(), 10000, '')) || ''; } catch (_) {}
+      let json = null; try { json = JSON.parse(t); } catch (_) {}
+      return { ok: !!r.ok, status: r.status, json };
+    }
+
+    // ---------- base64url y bytes ----------
+    const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    function b64uDec(t) {
+      const s = String(t || '').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_').replace(/\s+/g, '');
+      const out = []; let acc = 0, bits = 0;
+      for (let i = 0; i < s.length; i++) {
+        const v = B64.indexOf(s[i]); if (v < 0) continue;
+        acc = (acc << 6) | v; bits += 6;
+        if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); acc &= (1 << bits) - 1; }
+      }
+      return new Uint8Array(out);
+    }
+    function b64uEnc(bytes) {
+      let s = '', acc = 0, bits = 0;
+      for (let i = 0; i < bytes.length; i++) {
+        acc = (acc << 8) | bytes[i]; bits += 8;
+        while (bits >= 6) { bits -= 6; s += B64[(acc >> bits) & 63]; acc &= (1 << bits) - 1; }
+      }
+      if (bits > 0) s += B64[(acc << (6 - bits)) & 63];
+      return s;
+    }
+    function aBytes(t) { const u = unescape(encodeURIComponent(String(t))); const b = new Uint8Array(u.length); for (let i = 0; i < u.length; i++) b[i] = u.charCodeAt(i); return b; }
+    function deBytes(b) { let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); try { return decodeURIComponent(escape(s)); } catch (_) { return s; } }
+    function hexAleatorio(n) {
+      const b = new Uint8Array(n);
+      try { if (typeof crypto !== 'undefined' && crypto.getRandomValues) crypto.getRandomValues(b); else throw 0; } catch (_) { for (let i = 0; i < n; i++) b[i] = Math.floor(Math.random() * 256); }
+      return Array.from(b).map((x) => (x < 16 ? '0' : '') + x.toString(16)).join('');
+    }
+    function suby() { return (typeof crypto !== 'undefined' && crypto && crypto.subtle) ? crypto.subtle : null; }
+
+    // ---------- Prueba de trabajo (PoW) ----------
+    const BE = 512, LT = 511, DR = 2, LR = -1640531535, HR = -2048144777;
+    function rotl(t, e) { return ((t << e) | (t >>> (32 - e))) | 0; }
+    function ye(t) {
+      t[0] = (t[0] + t[1]) | 0; t[3] = rotl(t[3] ^ t[0], 16);
+      t[2] = (t[2] + t[3]) | 0; t[1] = rotl(t[1] ^ t[2], 12);
+      t[0] = (t[0] + t[1]) | 0; t[3] = rotl(t[3] ^ t[0], 8);
+      t[2] = (t[2] + t[3]) | 0; t[1] = rotl(t[1] ^ t[2], 7);
+    }
+    function gr(bytes) {
+      const e = [1779033703, -1150833019, 1013904242, -1521486534];
+      for (let i = 0; i < bytes.length; i++) { e[0] = (e[0] + (bytes[i] & 255)) | 0; e[0] = rotl(e[0], 7); ye(e); }
+      for (let i = 0; i < 8; i++) ye(e);
+      const r = new Int32Array(BE);
+      for (let i = 0; i < BE; i++) { ye(e); r[i] = e[0] ^ e[2]; }
+      for (let i = 0; i < DR; i++) {
+        for (let s = 0; s < BE; s++) {
+          const a = r[s] & LT;
+          let c = (r[s] + r[a]) | 0;
+          c = rotl(c, 13);
+          c = c ^ Math.imul(r[(s + 1) & LT], LR);
+          r[s] = c; e[0] = e[0] ^ c; ye(e);
+        }
+      }
+      const n = new Int32Array(8); const o = BE / 8;
+      for (let i = 0; i < 8; i++) {
+        ye(e);
+        let s = e[0]; const a = i * o;
+        for (let c = 0; c < o; c++) { const d = r[a + c]; s = (s + d) | 0; s = rotl(s, 5); s = s ^ Math.imul(d, HR); }
+        n[i] = s ^ e[2];
+      }
+      return n;
+    }
+    function wr(t) {
+      let e = 0;
+      for (let i = 0; i < t.length; i++) { const n = t[i]; if (n === 0) { e += 32; continue; } return e + Math.clz32(n); }
+      return e;
+    }
+
+    async function resolverPow(nonce, dificultad) {
+      if (!(dificultad > 0)) return '0';
+      const prefijo = `${nonce}:`;
+      const limite = Date.now() + 35000;
+      for (let s = 0; ; s++) {
+        const txt = prefijo + s; const b = new Uint8Array(txt.length);
+        for (let i = 0; i < txt.length; i++) b[i] = txt.charCodeAt(i) & 255;
+        if (wr(gr(b)) >= dificultad) return String(s);
+        if ((s & 255) === 255) { if (Date.now() > limite) return null; await esperar(0); }
+      }
+    }
+
+    // ---------- Atestación (ECDSA P-256) y descifrado (AES-GCM) ----------
+    async function atestacion(nonce) {
+      const S = suby();
+      const par = await S.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+      const jwk = await S.exportKey('jwk', par.publicKey);
+      const firma = await S.sign({ name: 'ECDSA', hash: 'SHA-256' }, par.privateKey, aBytes(nonce));
+      return { signature: b64uEnc(new Uint8Array(firma)), publicKey: { crv: 'P-256', ext: true, key_ops: ['verify'], kty: 'EC', x: jwk.x, y: jwk.y } };
+    }
+
+    async function descifrar(d) {
+      const S = suby();
+      const iv = b64uDec(d.iv), carga = b64uDec(d.payload), partes = d.key_parts || [];
+      const v = parseInt(String(d.version), 10);
+      let p1, p2;
+      if (v >= 1 && v <= 20 && partes.length >= 30) { p1 = b64uDec(partes[v - 1]); p2 = b64uDec(partes[(31 - v) - 1]); }
+      else if (partes.length >= 2) { p1 = b64uDec(partes[0]); p2 = b64uDec(partes[1]); }
+      else throw new Error('Faltan key_parts');
+      const clave = new Uint8Array(p1.length + p2.length); clave.set(p1, 0); clave.set(p2, p1.length);
+      const k = await S.importKey('raw', clave, { name: 'AES-GCM' }, false, ['decrypt']);
+      const plano = await S.decrypt({ name: 'AES-GCM', iv, tagLength: 128 }, k, carga);
+      return deBytes(new Uint8Array(plano));
+    }
+
+    // ---------- Flujo principal ----------
+    async function resolverFM(link) {
+      if (!suby()) return [];
+      const m = String(link).match(/\/(e|d)\/([a-zA-Z0-9]+)/);
+      if (!m) return [];
+      const tipo = m[1], id = m[2], pref = tipo === 'e' ? 'embed/' : '';
+      if (!deviceId) deviceId = hexAleatorio(16);
+
+      // 1) details (con respaldo de dominios por si el principal no responde)
+      const dominios = [...new Set([dominio(link), ...ALIAS].filter(Boolean))].slice(0, 5);
+      let detalle = null, base = '';
+      for (const d of dominios) {
+        const r = await api(`https://${d}/api/videos/${id}/${pref}details`, 'GET', null, { Referer: link, 'X-Embed-Parent': link });
+        if (r.ok && r.json && r.json.embed_frame_url) { detalle = r.json; base = `https://${d}`; break; }
+        if (transcurrido() > 20000) break;
+      }
+      if (!detalle) return [];
+      const marco = absoluta(detalle.embed_frame_url, base);
+      const dominioPlay = origen(marco) || base;
+
+      // 2) settings
+      let captcha = false;
+      const st = await api(`${base}/api/videos/${id}/${pref}settings`, 'GET', null, { Referer: link, 'X-Embed-Parent': link });
+      if (st.ok && st.json) captcha = !!st.json.captcha_required;
+
+      // 3) challenge
+      const ch = await api(`${dominioPlay}/api/videos/access/challenge`, 'POST', null, { Referer: marco, Origin: dominioPlay });
+      if (!ch.ok || !ch.json || !ch.json.challenge_id || !ch.json.nonce) return [];
+
+      // 4) attest
+      let viewerId = hexAleatorio(16);
+      let att;
+      try { att = await atestacion(ch.json.nonce); } catch (e) { return []; }
+      const payloadAttest = {
+        viewer_id: viewerId, device_id: deviceId, challenge_id: ch.json.challenge_id, nonce: ch.json.nonce,
+        signature: att.signature, public_key: att.publicKey,
+        client: { user_agent: UA, architecture: 'x86', bitness: '64', platform: 'Windows', platform_version: '10.0.0', pixel_ratio: 1.0, screen_width: 1920, screen_height: 1080, languages: ['en-US'] },
+        storage: { cookie: viewerId, local_storage: viewerId, indexed_db: `${viewerId}:${deviceId}`, cache_storage: `${viewerId}:${deviceId}` },
+        attributes: { entropy: 'high' }
+      };
+      const at = await api(`${dominioPlay}/api/videos/access/attest`, 'POST', payloadAttest, { Referer: marco, Origin: dominioPlay });
+      if (!at.ok || !at.json || !at.json.token) return [];
+      viewerId = at.json.viewer_id || viewerId; deviceId = at.json.device_id || deviceId;
+      const huella = { token: at.json.token, viewer_id: viewerId, device_id: deviceId, confidence: at.json.confidence };
+
+      const cab = { Referer: marco, Origin: dominioPlay, 'X-Embed-Parent': link };
+
+      // 5) captcha PoW (si hace falta)
+      async function hacerCaptcha() {
+        const c1 = await api(`${dominioPlay}/api/videos/${id}/embed/captcha`, 'POST', { fingerprint: huella }, cab);
+        if (!c1.ok || !c1.json || !c1.json.pow_nonce || !c1.json.pow_token) return false;
+        const dif = c1.json.pow_difficulty || 16;
+        const sol = await resolverPow(c1.json.pow_nonce, dif);
+        if (sol === null) return false;
+        const c2 = await api(`${dominioPlay}/api/videos/${id}/embed/captcha/verify`, 'POST', { pow_token: c1.json.pow_token, solution: sol, fingerprint: huella }, cab);
+        if (!c2.ok || !c2.json || !c2.json.token) return false;
+        cab['X-Captcha-Token'] = c2.json.token;
+        return true;
+      }
+      let captchaHecho = false;
+      if (captcha) captchaHecho = await hacerCaptcha();
+
+      // 6) playback
+      const urlPlay = `${dominioPlay}/api/videos/${id}/embed/playback`;
+      let pb = await api(urlPlay, 'POST', { fingerprint: huella }, cab);
+      if ((!pb.ok || !pb.json || !pb.json.playback) && !captchaHecho) {
+        if (await hacerCaptcha()) pb = await api(urlPlay, 'POST', { fingerprint: huella }, cab);
+      }
+      if (!pb.ok || !pb.json || !pb.json.playback) return [];
+
+      let texto;
+      try { texto = await descifrar(pb.json.playback); } catch (e) { return []; }
+      let json; try { json = JSON.parse(texto); } catch (_) { return []; }
+      const fuentes = (json && json.sources) || [];
+      if (!fuentes.length || !fuentes[0].url) return [];
+      return [{ url: fuentes[0].url, servidor: 'Filemoon', headers: { Referer: marco, 'User-Agent': UA, Origin: dominioPlay }, calidad: '' }];
+    }
+
+    return async function(url, referer, nf) {
+      _nf = nf; inicio = Date.now(); galletas = {};
+      let lista = [];
+      try { lista = await conLimite(resolverFM(url), 55000, []); } catch (e) {}
+      lista = (lista || []).filter((s) => s && s.url);
+      if (!lista.length) return { ok: false, ms: 0, status: 0 };
+      const s = lista[0];
+      return { ok: true, ms: 0, status: 200, play: { url: s.url, kind: /\.mp4(?:\?|#|$)/i.test(s.url) ? 'mp4' : 'm3u8', headers: s.headers || {} } };
+    };
+  })();
+
+  const resolverStreamwish = (function () {
+    const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
+    const RELOJ = typeof setTimeout === 'function';
+    const PRESUPUESTO = RELOJ ? 42000 : 25000;
+    const CIERRE = RELOJ ? 50000 : 40000;
+    let inicio = Date.now();
+    let _nf = null;
+
+    function esperar(ms) { return RELOJ ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve(); }
+    function transcurrido() { return Date.now() - inicio; }
+
+    function conLimite(promesa, ms, valor) {
+      let listo = false;
+      const fin = Date.now() + ms;
+      const trabajo = Promise.resolve(promesa).then((v) => { listo = true; return v; }, () => { listo = true; return valor; });
+      if (!RELOJ) return trabajo;
+      const reloj = (async () => {
+        while (!listo && Date.now() < fin) await esperar(Math.max(1, Math.min(250, fin - Date.now())));
+        return valor;
+      })();
+      return Promise.race([trabajo, reloj]);
+    }
+
+    async function traer(url, opciones) {
+      opciones = opciones || {};
+      const r = await _nf(url, opciones);
+      let cuerpo = '';
+      try { cuerpo = (await r.text()) || ''; } catch (_) {}
+      const h = {};
+      try { if (r.headers && r.headers.forEach) r.headers.forEach((v, k) => { h[String(k).toLowerCase()] = v; }); } catch (_) {}
+      return { ok: !!r.ok, status: r.status, statusText: r.statusText, url: r.url || url, headers: { get: (n) => h[String(n).toLowerCase()] || null }, text: () => Promise.resolve(cuerpo) };
+    }
+
+    async function pedir(url, opciones) {
+      const o = Object.assign({}, opciones || {});
+      o.headers = Object.assign({ 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8' }, o.headers || {});
+      const r = await conLimite(traer(url, o).catch((e) => ({ status: 0, statusText: e && e.message })), CIERRE - transcurrido(), null);
+      return r;
+    }
+
+    async function texto(url, opciones) {
+      const r = await pedir(url, opciones);
+      if (!r || !r.ok) return '';
+      try { return (await conLimite(r.text(), 10000, '')) || ''; } catch (e) { return ''; }
+    }
+
+    function origen(url) { const m = String(url || '').match(/^(https?:\/\/[^/?#]+)/i); return m ? m[1] : ''; }
+    function dominio(url) { const m = String(url || '').match(/^(?:https?:)?\/\/([^/?#:]+)/i); return m ? m[1].toLowerCase() : ''; }
+
+    const ENTIDADES = { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', nbsp: ' ', ntilde: 'ñ', Ntilde: 'Ñ', aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó', uacute: 'ú', Aacute: 'Á', Eacute: 'É', Iacute: 'Í', Oacute: 'Ó', Uacute: 'Ú', uuml: 'ü', iexcl: '¡', iquest: '¿' };
+    function entidades(t) {
+      return String(t || '').replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCharCode(parseInt(d, 10))).replace(/&([a-z]+);/gi, (x, n) => (n in ENTIDADES ? ENTIDADES[n] : x));
+    }
+
+    function absoluta(url, base) {
+      if (!url) return '';
+      const u = entidades(String(url).trim().replace(/\\\//g, '/'));
+      if (/^https?:\/\//i.test(u)) return u;
+      if (u.startsWith('//')) return `https:${u}`;
+      if (u.startsWith('/')) return origen(base) + u;
+      const b = String(base || '').replace(/[?#].*$/, '');
+      return (/^https?:\/\/[^/]+$/i.test(b) ? `${b}/` : b.replace(/[^/]*$/, '')) + u;
+    }
+
+    function desempacar(html) {
+      const salida = [];
+      const patron = /eval\(function\(p,a,c,k,e,[a-z]\)\{[\s\S]*?\}\s*\(\s*'((?:[^'\\]|\\.)*)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'((?:[^'\\]|\\.)*)'\.split\('\|'\)/g;
+      const digitos = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      let m;
+      while ((m = patron.exec(String(html || '')))) {
+        const base = parseInt(m[2], 10);
+        const palabras = m[4].split('|');
+        const valor = (t) => {
+          let n = 0;
+          for (const ch of t) { const v = digitos.indexOf(ch); if (v < 0 || v >= base) return -1; n = n * base + v; }
+          return n;
+        };
+        salida.push(m[1].replace(/\\'/g, "'").replace(/\b\w+\b/g, (t) => {
+          const i = valor(t);
+          return i >= 0 && i < palabras.length && palabras[i] ? palabras[i] : t;
+        }));
+      }
+      return salida.join('\n');
+    }
+
+    function esImagen(url) { return /\.(?:jpg|jpeg|png|gif|webp|svg|bmp|ico)(?:\?|$)/i.test(url || ''); }
+    function enlace(url, servidor, headers, calidad) {
+      if (!url || !/^https?:\/\//i.test(url)) return [];
+      return [{ url, servidor, headers: headers || {}, calidad: calidad || '' }];
+    }
+
+    function buscarVideo(t, base) {
+      const fuentes = [
+        /["']?hls[0-9]?["']?\s*:\s*["']([^"']+)["']/i,
+        /sources\s*:\s*\[\s*\{\s*(?:src|file)\s*:\s*["']([^"']+)["']/i,
+        /["']?(?:file|src|source|url|link)["']?\s*:\s*["']([^"']+\.(?:m3u8|mp4|txt)[^"']*)["']/i,
+        /["'](https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)["']/i,
+        /["'](https?:\/\/[^"'\s]+\.mp4[^"'\s]*)["']/i,
+        /(https?:\/\/[^\s"'<>]+\.(?:m3u8|mp4)(?:\?[^\s"'<>]*)?)/i
+      ];
+      for (const f of fuentes) {
+        const m = String(t || '').match(f);
+        if (m && m[1] && !esImagen(m[1])) return absoluta(m[1], base);
+      }
+      return '';
+    }
+
+    function primerMarco(html) {
+      const re = /<iframe[^>]+src=["']([^"']+)["']/gi;
+      let m;
+      while ((m = re.exec(String(html || '')))) if (!/^\s*(?:javascript|about|data|blob):/i.test(m[1])) return m[1];
+      return '';
+    }
+
+    function nombreServidor(url) {
+      const h = dominio(url).replace(/^www\./, '');
+      const partes = h.split('.');
+      const n = partes.length > 1 ? partes[partes.length - 2] : h;
+      return n ? n.charAt(0).toUpperCase() + n.slice(1) : 'Directo';
+    }
+
+    async function resolverGenerico(url, servidor, referer, profundidad) {
+      const resp = await pedir(url, { headers: { Referer: referer || `${origen(url)}/` } });
+      let html = ''; if (resp && resp.ok) { try { html = (await conLimite(resp.text(), 10000, '')) || ''; } catch (e) { html = ''; } }
+      if (resp && resp.status >= 300 && resp.status < 400 && (profundidad || 0) < 4) {
+        const destino = resp.headers && resp.headers.get('location');
+        if (destino) return resolverGenerico(absoluta(destino, url), servidor, url, (profundidad || 0) + 1);
+      }
+      if (!html) return [];
+      if (resp.url && resp.url !== url) url = resp.url;
+      
+      const codigo = `${desempacar(html)}\n${html}`;
+      const hlsMejor = (() => { const re = /["']?hls(\d*)["']?\s*[:=]\s*["']((?:https?:\/\/|\/)[^"']+\.(?:m3u8|txt)[^"']*)["']/gi; let m, mejor = null; while ((m = re.exec(codigo))) { const n = parseInt(m[1] || '0', 10); if (!mejor || n > mejor.n) mejor = { n, u: m[2] }; } return mejor ? mejor.u : ''; })();
+      const video = hlsMejor || buscarVideo(codigo, url) || (html.match(/<meta[^>]+property=["']og:video(?::secure_url)?["'][^>]+content=["']([^"']+)["']/i) || [])[1];
+      
+      if (video) {
+        return enlace(absoluta(video, url), servidor, { Referer: `${origen(url)}/`, Origin: origen(url), 'User-Agent': UA });
+      }
+      
+      const marco = primerMarco(html);
+      if (marco && (profundidad || 0) < 2) {
+        return resolverGenerico(absoluta(marco, url), servidor, url, (profundidad || 0) + 1);
+      }
+      
+      // Cargador de StreamWish (solo carga /main.js y redirige por JavaScript): se resuelve con espejos en resolverSW.
+      if ((profundidad || 0) === 0 && html.length < 4000 && /<script[^>]+src=["'][^"']*main\.js/i.test(html) && /Page is loading|Loading\.\.\./i.test(html)) return [];
+      const salto = (html.match(/<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["'][^"']*url=([^"'>\s]+)/i) || html.match(/location\.(?:replace|assign)\(\s*["']([^"']+)["']/i) || html.match(/(?:window\.|top\.|self\.|document\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i) || [])[1];
+      if (salto && (profundidad || 0) < 3 && absoluta(salto, url) !== url) {
+        return resolverGenerico(absoluta(salto, url), nombreServidor(absoluta(salto, url)), url, (profundidad || 0) + 1);
+      }
+      return [];
+    }
+
+    const ESPEJOS = ['embedwish.com', 'playerwish.com', 'swishsrv.com', 'streamwish.com', 'gradehgplus.com', 'wishfast.top', 'strmwis.xyz', 'stbhg.click', 'hlswish.com', 'awish.pro'];
+    let ultimoEspejo = '';
+
+    async function resolverSW(url, referer) {
+      const directa = await resolverGenerico(url, nombreServidor(url), referer, 0);
+      if (directa.length) return directa;
+      const ruta = (String(url).match(/^https?:\/\/[^/?#]+(\/(?:e|v|embed|d)\/[^?#]+)/i) || [])[1] || '';
+      if (!ruta) return [];
+      const propio = dominio(url);
+      const lista = [...new Set([ultimoEspejo, ...ESPEJOS].filter(Boolean))].filter((d) => d !== propio);
+      const probar = async (d) => {
+        const r = await resolverGenerico(`https://${d}${ruta}`, nombreServidor(`https://${d}/`), url, 1);
+        if (r.length) ultimoEspejo = d;
+        return r;
+      };
+      const primero = await probar(lista[0]);
+      if (primero.length) return primero;
+      const resto = lista.slice(1);
+      const hallado = await new Promise((resolver) => {
+        let pendientes = resto.length;
+        if (!pendientes) return resolver([]);
+        const fin = (l) => { if (l && l.length) resolver(l); else if (--pendientes === 0) resolver([]); };
+        resto.forEach((d) => probar(d).then(fin, () => fin([])));
+      });
+      return hallado;
+    }
+
+    return async function(url, referer, nf) {
+      _nf = nf; inicio = Date.now();
+      let u; try { u = new URL(url); } catch (_) { return { ok: false, ms: 0, status: 0 }; }
+      if (/\.(m3u8|mp4|mkv)$/i.test(u.pathname) || /\/(?:index|master|playlist)[^/]*\.txt$/i.test(u.pathname)) {
+        const cab = { 'User-Agent': UA, Referer: referer || (u.origin + '/') };
+        return { ok: true, ms: 0, status: 200, play: { url, kind: /\.(mp4|mkv)$/i.test(u.pathname) ? 'mp4' : 'm3u8', headers: cab } };
+      }
+      let lista = [];
+      try { lista = await conLimite(resolverSW(url, referer), 45000, []); } catch (e) {}
+      lista = (lista || []).filter((s) => s && s.url);
+      if (!lista.length) return { ok: false, ms: 0, status: 0 };
+      const s = lista[0];
+      return { ok: true, ms: 0, status: 200, play: { url: s.url, kind: /\.m3u8|\.txt(?:\?|#|$)/i.test(s.url) ? 'm3u8' : 'mp4', headers: s.headers || {} } };
+    };
+  })();
 
   const resolverUniversal = (function () {
     const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
@@ -133,6 +597,8 @@
 
     return async function(url, referer, nf) {
       _nf = nf; inicio = Date.now();
+      let u; try { u = new URL(url); } catch (_) { return { ok: false, ms: 0, status: 0 }; }
+      if (/\.(m3u8|mp4|mkv)$/i.test(u.pathname)) return { ok: true, ms: 0, status: 200, play: { url, kind: /\.m3u8$/i.test(u.pathname) ? 'm3u8' : 'mp4', headers: { 'User-Agent': UA, Referer: referer || (u.origin + '/') } } };
       let lista = [];
       try { lista = await conLimite(resolverGenerico(url, nombreServidor(url), referer, 0), 45000, []); } catch (e) { }
       lista = (lista || []).filter((s) => s && s.url);
@@ -613,16 +1079,29 @@
     function hexBytes(b) { let t = ''; for (const x of b) t += (x < 16 ? '0' : '') + x.toString(16); return t; }
     function datoAltcha(textoReto, clave) { const m = textoReto.match(new RegExp(`"${clave}"\\s*:\\s*(?:"([^"]*)"|(\\d+))`)); return m ? (m[1] !== undefined ? m[1].replace(/\\\//g, '/') : m[2]) : ''; }
 
-    function resolverAltcha(textoReto) {
+    async function resolverAltcha(textoReto) {
       const algoritmo = datoAltcha(textoReto, 'algorithm'); if (algoritmo && !/pbkdf2\/sha-?256/i.test(algoritmo)) return null;
       const nonce = datoAltcha(textoReto, 'nonce'), sal = datoAltcha(textoReto, 'salt'), prefijo = datoAltcha(textoReto, 'keyPrefix').toLowerCase(), costo = parseInt(datoAltcha(textoReto, 'cost'), 10) || 0, largo = parseInt(datoAltcha(textoReto, 'keyLength'), 10) || 32;
       if (!/^[0-9a-f]+$/i.test(nonce) || !/^[0-9a-f]+$/i.test(sal) || !/^[0-9a-f]+$/.test(prefijo) || costo <= 0) return null;
-      const nativo = typeof __crypto_pbkdf2_hex === 'function', comienzo = Date.now(), tope = nativo ? Math.max(4000, restante() - 12000) : RELOJ ? 9000 : 6000, salBytes = bytesHex(sal), nonceBytes = bytesHex(nonce);
+      const hexNativo = typeof __crypto_pbkdf2_hex === 'function';
+      const sub = (typeof crypto !== 'undefined' && crypto && crypto.subtle && typeof crypto.subtle.deriveBits === 'function') ? crypto.subtle : null;
+      const metodo = hexNativo ? 'nativo' : (sub ? 'subtle' : 'js');
+      const rapido = metodo !== 'js';
+      const comienzo = Date.now(), tope = rapido ? Math.max(4000, restante() - 12000) : RELOJ ? 9000 : 6000, salBytes = bytesHex(sal), nonceBytes = bytesHex(nonce);
+      const salU8 = new Uint8Array(salBytes);
       for (let contador = 0; contador < 50000; contador++) {
-        if (Date.now() - comienzo > tope) break; const cuenta = [(contador >>> 24) & 255, (contador >>> 16) & 255, (contador >>> 8) & 255, contador & 255]; let clave = '';
-        try { clave = nativo ? String(__crypto_pbkdf2_hex(nonce + hexBytes(cuenta), sal, costo, largo * 8, 'SHA256') || '').toLowerCase() : hexBytes(pbkdf2Js(nonceBytes.concat(cuenta), salBytes, costo, largo)); } catch (e) { return null; }
+        if (Date.now() - comienzo > tope) break;
+        const cuenta = [(contador >>> 24) & 255, (contador >>> 16) & 255, (contador >>> 8) & 255, contador & 255]; let clave = '';
+        try {
+          if (hexNativo) clave = String(__crypto_pbkdf2_hex(nonce + hexBytes(cuenta), sal, costo, largo * 8, 'SHA256') || '').toLowerCase();
+          else if (sub) {
+            const k = await sub.importKey('raw', new Uint8Array(nonceBytes.concat(cuenta)), 'PBKDF2', false, ['deriveBits']);
+            const bits = await sub.deriveBits({ name: 'PBKDF2', salt: salU8, iterations: costo, hash: 'SHA-256' }, k, largo * 8);
+            clave = hexBytes(new Uint8Array(bits));
+          } else clave = hexBytes(pbkdf2Js(nonceBytes.concat(cuenta), salBytes, costo, largo));
+        } catch (e) { return null; }
         if (clave.startsWith(prefijo)) return { contador, clave };
-        if (!nativo && contador === 0 && (Date.now() - comienzo) * Math.min(Math.pow(16, prefijo.length), 1024) / 2 > tope * 4) break;
+        if (metodo === 'js' && contador === 0 && (Date.now() - comienzo) * Math.min(Math.pow(16, prefijo.length), 1024) / 2 > tope * 4) break;
       }
       return null;
     }
@@ -631,7 +1110,7 @@
       const ficha = (pagina.html.match(/<input[^>]+name=["']_token["'][^>]*>/i) || [''])[0], token = entidades((ficha.match(/value=["']([^"']*)["']/i) || [])[1] || ''), widget = (pagina.html.match(/<altcha-widget\b[^>]*>/i) || [''])[0], reto = entidades((widget.match(/\bchallenge(?:-?url)?=["']([^"']+)["']/i) || [])[1] || '').trim();
       if (!token || !reto) return null; let galletas = pagina.galletas, textoReto = reto.startsWith('{') ? reto : '';
       if (!textoReto) { const r = await pedir(absoluta(reto, pagina.url), { headers: Object.assign({ Referer: pagina.url, Accept: 'application/json' }, galletas ? { Cookie: galletas } : {}) }); if (!r || !r.ok) return null; galletas = unirGalletas(galletas, cookies(r)); textoReto = (await conLimite(r.text(), 10000, '')) || ''; }
-      const solucion = resolverAltcha(textoReto); if (!solucion) return null; let parametros = (textoReto.match(/"parameters"\s*:\s*(\{[^{}]*\})/) || [])[1], firma = (textoReto.match(/"signature"\s*:\s*"([^"]+)"/) || [])[1];
+      const solucion = await resolverAltcha(textoReto); if (!solucion) return null; let parametros = (textoReto.match(/"parameters"\s*:\s*(\{[^{}]*\})/) || [])[1], firma = (textoReto.match(/"signature"\s*:\s*"([^"]+)"/) || [])[1];
       if (!parametros || !firma) return null; const carga = btoa(`{"challenge":{"parameters":${parametros},"signature":"${firma}"},"solution":{"counter":${solucion.contador},"derivedKey":"${solucion.clave}","time":1}}`), casa = origen(pagina.url);
       for (const valor of [encodeURIComponent(carga), encodeURIComponent(encodeURIComponent(carga))]) {
         const r = await pedir(pagina.url, { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/x-www-form-urlencoded', Origin: casa, Referer: pagina.url }, galletas ? { Cookie: galletas } : {}), body: `_token=${encodeURIComponent(token)}&access=0&altcha=${valor}` });
@@ -699,6 +1178,8 @@
     { patron: /vidhide|filelions|ryderjet|dintezuvio|mivalyo|dhtpre|peytonepre|smoothpre|louishide|lylxan|movearnpre|kinoger|alions|azipcdn|nikaplayer|fviplions|niikaplayerr|callistanise|dinisglows|dingtezuni|minochinos|taylorplayer/i, run: resolverVidhide },
     { patron: /vimeos/i, run: resolverVimeos },
     { patron: /vidara\.|mxzhxco8dft/i, run: resolverVidara },
+    { patron: /streamwish|embedwish|hlswish|playerwish|swiftplayers|swishsrv|wishembed|wishfast|sfastwish|strmwis|\b[amd]wish\.(?:pro|top)|hglink\.to|hgcloud\.to|dhcplay|gradehgplus|ultpreplayer|haxloppd|stbhg|playnixes|hanerix|hglamioz|niramirus|medixiru|audinifer|vibuxer|hgplaycdn|vsembed|ajmidyad|khadhnayad|atabknha/i, run: resolverStreamwish },
+    { patron: /filemoon|moonplayer|byse[a-z]*\.|bf0skv|moflix-stream/i, run: resolverFilemoon },
     { patron: /workers\.dev/i, run: resolverWorkers }
   ];
 
