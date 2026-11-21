@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.0.6';
+  const VERSION = '1.0.8';
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
   let _nf = null;
 
@@ -236,6 +236,11 @@
       _nf = env && env.nativeFetch;
       const url = String(link.url || '');
       const t0 = Date.now();
+
+      // Fawanews: los .m3u8 de 193.47.62.x dan 403 sin el Referer de la web
+      if (/^https?:\/\/193\.47\.62\.\d+\/.+\.m3u8(\?|#|$)/i.test(url)) {
+        return { ok: true, ms: 0, status: 200, play: { url, kind: 'm3u8', headers: { 'User-Agent': UA, 'Referer': 'http://www.fawanews.sc/', 'Origin': 'http://www.fawanews.sc' } } };
+      }
 
       if (/\.(m3u8|mp4|ts|mkv)(\?|#|$)/i.test(url)) {
         return { ok: true, ms: 0, status: 200, play: { url, kind: /\.mp4(\?|$)/i.test(url) ? 'mp4' : 'm3u8', headers: { 'User-Agent': UA } } };
