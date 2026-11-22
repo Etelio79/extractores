@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const VERSION = '1.1.1'; 
+  const VERSION = '1.1.2'; 
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
   let _nf = null;
 
@@ -81,7 +81,6 @@
       const match = html.match(/window\s*\[\s*['"][^'"]+['"]\s*\]\s*=\s*['"]([A-Za-z0-9+/=\\\/]{40,})['"]/);
       if (!match) return [];
       let raw = match[1].replace(/\\\//g, '/').replace(/[\r\n\s]/g, '');
-      log && log('   ↳ window[...] base64 detectado (' + raw.length + ' B)');
 
       let decoded = raw;
       for (let i = 0; i < 3; i++) {
@@ -103,7 +102,7 @@
         return [{ url: anyUrl[1].replace(/\\\//g, '/'), kind: /\.mp4(\?|$)/i.test(anyUrl[1]) ? 'mp4' : 'm3u8',
                   headers: { 'User-Agent': UA, 'Referer': u.origin + '/', 'Origin': u.origin } }];
       }
-    } catch (e) { log && log('   ↳ window base64 ex: ' + e.message); }
+    } catch (e) {}
     return [];
   }
 
@@ -118,7 +117,6 @@
       if (!dec) continue;
       const u = dec.match(/(https?:\/\/[^\s"'<>\\]+?\.(?:m3u8|mp4)[^\s"'<>\\]*)/i);
       if (u) {
-        log && log('   ↳ m3u8 vía atob()');
         return absoluta(u[1].replace(/\\\//g, '/'), base);
       }
       if (/^[A-Za-z0-9+/=]+$/.test(dec) && dec.length > 40) {
@@ -126,7 +124,6 @@
         if (dec2) {
           const u2 = dec2.match(/(https?:\/\/[^\s"'<>\\]+?\.(?:m3u8|mp4)[^\s"'<>\\]*)/i);
           if (u2) {
-            log && log('   ↳ m3u8 vía atob() doble');
             return absoluta(u2[1].replace(/\\\//g, '/'), base);
           }
         }
@@ -140,7 +137,6 @@
       if (!dec) continue;
       const u = dec.match(/(https?:\/\/[^\s"'<>\\]+?\.(?:m3u8|mp4)[^\s"'<>\\]*)/i);
       if (u) {
-        log && log('   ↳ m3u8 vía cadena base64 suelta');
         return absoluta(u[1].replace(/\\\//g, '/'), base);
       }
     }
@@ -176,13 +172,11 @@
     try {
       let iframeSrc = extraerIframe(html);
       if (!iframeSrc) {
-        log('   ↳ No se encontró iframe.');
         return [];
       }
 
       iframeSrc = iframeSrc.replace(/&amp;/g, '&');
       const finalIframeUrl = absoluta(iframeSrc, url);
-      log('   ↳ Cargando iframe: ' + finalIframeUrl);
 
       // Referer = origen de la página embed (no hardcodeado)
       let pageOrigin = '';
@@ -198,13 +192,10 @@
       const r2 = await _nf(finalIframeUrl, { headers });
 
       if (!r2 || !r2.ok) {
-        log('   ✗ Error al cargar iframe: HTTP ' + (r2 ? r2.status : 'sin respuesta'));
         return [];
       }
 
       const iframeHtml = await r2.text();
-      log('   ↳ Iframe cargado (' + iframeHtml.length + ' B)');
-      log('   ↳ Inicio del iframe: ' + iframeHtml.slice(0, 300).replace(/\s+/g, ' '));
 
       let iframeOrigin = '';
       try { iframeOrigin = new URL(finalIframeUrl).origin; } catch (e) {}
@@ -212,45 +203,31 @@
       // A. m3u8 directo
       let videoUrl = extraerM3u8(iframeHtml, finalIframeUrl);
       if (videoUrl) {
-        log('   ↳ m3u8 directo encontrado: ' + videoUrl);
         return [{ url: videoUrl, kind: 'm3u8', headers: { 'User-Agent': UA, 'Referer': iframeOrigin + '/', 'Origin': iframeOrigin } }];
       }
 
       // B. Clappr Base64 (NH/tv)
       let clapprList = await resolverClapprBase64(finalIframeUrl, iframeHtml);
       if (clapprList.length) {
-        log('   ↳ Video encontrado vía Clappr Base64.');
         return clapprList;
       }
 
       // C. window['...'] = base64
       let windowList = await resolverWindowBase64(finalIframeUrl, iframeHtml, log);
       if (windowList.length) {
-        log('   ↳ Video encontrado vía window[...] base64.');
         return windowList;
       }
 
       // D. m3u8 en scripts ofuscados (atob / cadenas base64)
       videoUrl = extraerM3u8DeScriptOfuscado(iframeHtml, finalIframeUrl, log);
       if (videoUrl) {
-        log('   ↳ m3u8 encontrado en script ofuscado.');
         return [{ url: videoUrl, kind: 'm3u8', headers: { 'User-Agent': UA, 'Referer': iframeOrigin + '/', 'Origin': iframeOrigin } }];
-      }
-
-      // E. Log informativo de scripts
-      const scripts = iframeHtml.match(/<script\b[^>]*>([\s\S]*?)<\/script>/gi) || [];
-      log('   ↳ Scripts en iframe: ' + scripts.length);
-      for (let i = 0; i < Math.min(scripts.length, 3); i++) {
-        let sc = scripts[i].replace(/<\/?script[^>]*>/gi, '').replace(/\s+/g, ' ');
-        if (sc.length > 10) log(`   ↳ Script ${i + 1}: ${sc.slice(0, 200)}...`);
       }
 
       // F. Seguir iframe anidado (un nivel más) — necesario para tvf90 y otros
       let nestedIframe = extraerIframe(iframeHtml);
       if (nestedIframe) {
-        log('   ↳ Iframe anidado encontrado: ' + nestedIframe);
         const nestedUrl = absoluta(nestedIframe.replace(/&amp;/g, '&'), finalIframeUrl);
-        log('   ↳ Cargando iframe anidado: ' + nestedUrl);
 
         let nestedOrigin = '';
         try { nestedOrigin = new URL(nestedUrl).origin; } catch (e) {}
@@ -265,56 +242,37 @@
 
         if (r3 && r3.ok) {
           const nestedHtml = await r3.text();
-          log('   ↳ Iframe anidado cargado (' + nestedHtml.length + ' B)');
-          log('   ↳ Inicio anidado: ' + nestedHtml.slice(0, 300).replace(/\s+/g, ' '));
 
           // A1. m3u8 directo en anidado
           let nestedVideoUrl = extraerM3u8(nestedHtml, nestedUrl);
           if (nestedVideoUrl) {
-            log('   ↳ m3u8 directo encontrado en anidado: ' + nestedVideoUrl);
             return [{ url: nestedVideoUrl, kind: 'm3u8', headers: { 'User-Agent': UA, 'Referer': nestedOrigin + '/', 'Origin': nestedOrigin } }];
           }
 
           // B1. Clappr en anidado
           let nestedClappr = await resolverClapprBase64(nestedUrl, nestedHtml);
           if (nestedClappr.length) {
-            log('   ↳ Video encontrado vía Clappr en anidado.');
             return nestedClappr;
           }
 
           // C1. window['...'] en anidado
           let nestedWin = await resolverWindowBase64(nestedUrl, nestedHtml, log);
           if (nestedWin.length) {
-            log('   ↳ Video encontrado vía window[...] en anidado.');
             return nestedWin;
           }
 
           // D1. m3u8 ofuscado en anidado
           nestedVideoUrl = extraerM3u8DeScriptOfuscado(nestedHtml, nestedUrl, log);
           if (nestedVideoUrl) {
-            log('   ↳ m3u8 en script ofuscado anidado.');
             return [{ url: nestedVideoUrl, kind: 'm3u8', headers: { 'User-Agent': UA, 'Referer': nestedOrigin + '/', 'Origin': nestedOrigin } }];
           }
 
-          // E1. Log scripts del anidado
-          const nestedScripts = nestedHtml.match(/<script\b[^>]*>([\s\S]*?)<\/script>/gi) || [];
-          log('   ↳ Scripts en anidado: ' + nestedScripts.length);
-          for (let i = 0; i < Math.min(nestedScripts.length, 3); i++) {
-            let sc = nestedScripts[i].replace(/<\/?script[^>]*>/gi, '').replace(/\s+/g, ' ');
-            if (sc.length > 10) log(`   ↳ Script anidado ${i + 1}: ${sc.slice(0, 200)}...`);
-          }
-
-          log('   ✗ No se encontró video en iframe anidado.');
-        } else {
-          log('   ✗ Error al cargar iframe anidado: HTTP ' + (r3 ? r3.status : 'sin respuesta'));
         }
       }
 
-      log('   ✗ No se encontró video en el iframe.');
       return [];
 
     } catch (e) {
-      log('   ✗ Excepción en iframe: ' + e.message);
       return [];
     }
   }
@@ -347,45 +305,50 @@
   // Resolver genérico para páginas con iframe (tvf90 y otros)
   async function resolverPaginaConIframe(url, log) {
     try {
-      log('Analizando página genérica con iframe...');
       const r = await _nf(url, { headers: { 'User-Agent': UA, 'Referer': url } });
-      log('   ↳ Página: HTTP ' + (r ? r.status : 'error'));
       if (!r || !r.ok) return [];
 
       const html = await r.text();
-      log('   ↳ HTML cargado (' + html.length + ' B)');
 
       // Intentar window['...'] base64 en la página principal
       const winList = await resolverWindowBase64(url, html, log);
       if (winList.length) {
-        log('   ↳ Video encontrado vía window[...] base64 en página principal.');
         return winList;
       }
 
       // Intentar Clappr en la página principal
       const clapprList = await resolverClapprBase64(url, html);
       if (clapprList.length) {
-        log('   ↳ Video encontrado vía Clappr en página principal.');
         return clapprList;
       }
 
       // Intentar m3u8 directo en la página principal
       const directo = extraerM3u8(html, url);
       if (directo) {
-        log('   ↳ m3u8 directo en página principal: ' + directo);
         const u = new URL(url);
         return [{ url: directo, kind: 'm3u8', headers: { 'User-Agent': UA, 'Referer': u.origin + '/', 'Origin': u.origin } }];
       }
 
       // Ir al iframe
       const cookies = obtenerCookies(r);
-      log('   ↳ Cookies: ' + (cookies ? cookies.slice(0, 100) : 'ninguna'));
 
       return await resolverIframeFirmado(url, html, cookies, log);
     } catch (e) {
-      log('   ✗ Excepción en página genérica: ' + e.message);
       return [];
     }
+  }
+
+  // Lee a dónde redirige una URL sin seguir la redirección (plugin nativo); devuelve la URL final o ''
+  async function destinoRedireccion(url, hdr) {
+    try {
+      const cap = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.CapacitorHttp;
+      if (!cap || !cap.request) return '';
+      const r = await cap.request({ url, method: 'GET', headers: hdr, disableRedirects: true, responseType: 'text' });
+      const h = r && r.headers ? r.headers : {};
+      const loc = h.Location || h.location || h.LOCATION || '';
+      if (r && r.status >= 300 && r.status < 400 && loc) return new URL(loc, url).href;
+    } catch (e) {}
+    return '';
   }
 
   async function resolve(link, log, env) {
@@ -399,9 +362,16 @@
         return { ok: true, ms: 0, status: 200, play: { url, kind: 'm3u8', headers: { 'User-Agent': UA, 'Referer': 'http://www.fawanews.sc/', 'Origin': 'http://www.fawanews.sc' } } };
       }
 
+      // 0b) rtmpcdn.com (fawanews): redirige a play.aarray.cn con token; se entrega la URL final
+      if (/^https?:\/\/(?:www\.)?rtmpcdn\.com\/.+\.m3u8(\?|#|$)/i.test(url)) {
+        const hdr = { 'User-Agent': UA, 'Referer': 'http://www.fawanews.sc/', 'Origin': 'http://www.fawanews.sc' };
+        const destino = await destinoRedireccion(url, hdr);
+        if (destino) return { ok: true, ms: Date.now() - t0, status: 200, play: { url: destino, kind: 'm3u8', headers: { 'User-Agent': UA } } };
+        return { ok: true, ms: Date.now() - t0, status: 200, play: { url, kind: 'm3u8', headers: hdr } };
+      }
+
       // 1) Enlace directo
       if (/\.(m3u8|mp4|ts|mkv)(\?|#|$)/i.test(url)) {
-        log('Enlace directo.');
         return { ok: true, ms: 0, status: 200, play: { url, kind: /\.mp4(\?|$)/i.test(url) ? 'mp4' : 'm3u8', headers: { 'User-Agent': UA } } };
       }
 
@@ -416,27 +386,21 @@
 
       // 2) Páginas embed (ESPN, FOX, tvf90, etc.)
       if (/embed\.|saohgdassregions|ksdjugf|deportes\.|tvf90\./i.test(url)) {
-        log('Analizando página embed...');
         const r = await _nf(url, { headers: { 'User-Agent': UA, 'Referer': url } });
-        log('Página principal: HTTP ' + (r ? r.status : 'error'));
         if (!r || !r.ok) return { ok: false, ms: Date.now() - t0, status: 0 };
 
         const html = await r.text();
-        log('HTML cargado: ' + html.length + ' B');
 
         // window['...'] base64 en la página principal
         const winList = await resolverWindowBase64(url, html, log);
         if (winList.length) {
-          log('→ ' + winList[0].url);
           return { ok: true, ms: Date.now() - t0, status: 200, play: winList[0] };
         }
 
         const cookies = obtenerCookies(r);
-        log('Cookies: ' + (cookies ? cookies.slice(0, 100) : 'ninguna'));
 
         const lista = await resolverIframeFirmado(url, html, cookies, log);
         if (lista.length) {
-          log('→ ' + lista[0].url);
           return { ok: true, ms: Date.now() - t0, status: 200, play: lista[0] };
         }
         return { ok: false, ms: Date.now() - t0, status: 0 };
@@ -444,42 +408,36 @@
 
       // 3) streamx / live1 / global
       if (/streamx|live1\.php|global[123]\.php/i.test(url)) {
-        log('Analizando página de TV en vivo...');
         const r = await _nf(url, { headers: { 'User-Agent': UA, 'Referer': url } });
         if (r && r.ok) {
           const html = await r.text();
           let lista = await resolverClapprBase64(url, html);
-          if (lista.length) { log('→ ' + lista[0].url); return { ok: true, ms: Date.now() - t0, status: 200, play: lista[0] }; }
+          if (lista.length) { return { ok: true, ms: Date.now() - t0, status: 200, play: lista[0] }; }
 
           lista = await resolverWindowBase64(url, html, log);
-          if (lista.length) { log('→ ' + lista[0].url); return { ok: true, ms: Date.now() - t0, status: 200, play: lista[0] }; }
+          if (lista.length) { return { ok: true, ms: Date.now() - t0, status: 200, play: lista[0] }; }
 
           if (/streamx/i.test(url)) {
             lista = await resolverStreamxBypass(url);
-            if (lista.length) { log('→ ' + lista[0].url); return { ok: true, ms: Date.now() - t0, status: 200, play: lista[0] }; }
+            if (lista.length) { return { ok: true, ms: Date.now() - t0, status: 200, play: lista[0] }; }
           }
         }
       }
 
       // 4) global1 / streamtp / cdnpeer
       if (/global1\.php/i.test(url) || /streamtp\d*\./i.test(url) || /cdnpeer/i.test(url)) {
-        log('Resolviendo página global1...');
         const lista = await resolverGlobal(url);
-        if (lista.length) { log('→ ' + lista[0].url); return { ok: true, ms: Date.now() - t0, status: 200, play: lista[0] }; }
+        if (lista.length) { return { ok: true, ms: Date.now() - t0, status: 200, play: lista[0] }; }
       }
 
       // 5) Fallback genérico: cualquier página con iframe (cubre tvf90 y futuros dominios)
-      log('Intentando resolver como página genérica con iframe...');
       const listaGen = await resolverPaginaConIframe(url, log);
       if (listaGen.length) {
-        log('→ ' + listaGen[0].url);
         return { ok: true, ms: Date.now() - t0, status: 200, play: listaGen[0] };
       }
 
-      log('No se pudo resolver el canal.');
       return { ok: false, ms: Date.now() - t0, status: 0 };
     } catch (e) {
-      log('Excepción general: ' + e.message);
       return { ok: false, ms: 0, status: 0 };
     }
   }
